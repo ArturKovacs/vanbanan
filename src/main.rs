@@ -1,12 +1,10 @@
-use std::{
-    collections::HashSet, fs::File, io::{Cursor, Read}, sync::Arc
-};
+use std::{collections::HashSet, io::Cursor, sync::Arc};
 
 use futures::future::join_all;
 
 // use hyper_util::rt::TokioIo;
-use log::{error, info, debug};
-use tokio::{sync::Mutex};
+use log::{debug, error, info};
+use tokio::sync::Mutex;
 
 use axum::{
     Json, Router,
@@ -15,9 +13,7 @@ use axum::{
     routing::{get, post},
 };
 
-use tower_http::{
-    services::{ServeDir, ServeFile},
-};
+use tower_http::services::ServeDir;
 
 use web_push::*;
 
@@ -41,7 +37,11 @@ impl PushSender {
 
     async fn add_subscription(&self, subscription_info: SubscriptionInfo) {
         let mut subscriptions = self.subscriptions.lock().await;
-        debug!("Adding subscription. Total subscriptions: {}. New subscription: {:?}", subscriptions.len(), subscription_info);
+        debug!(
+            "Adding subscription. Total subscriptions: {}. New subscription: {:?}",
+            subscriptions.len(),
+            subscription_info
+        );
         subscriptions.insert(subscription_info);
     }
 
@@ -112,7 +112,7 @@ async fn post_message_handler(
     payload: String,
 ) -> impl IntoResponse {
     debug!("Distributing push message to subscribers: {}", payload);
-    
+
     let result = push_sender
         .send_push_message(payload.as_bytes(), Some(60))
         .await;
@@ -121,12 +121,12 @@ async fn post_message_handler(
         Err(e) => {
             error!("Failed to send push message: {:?}", e);
             return Err("");
-        },
+        }
     }
     Ok("Message sent")
 }
 
-async fn get_public_key_handler(State(push_sender): State<Arc<PushSender>>,) -> impl IntoResponse {
+async fn get_public_key_handler(State(push_sender): State<Arc<PushSender>>) -> impl IntoResponse {
     push_sender.vapid_public_key.clone()
 }
 
