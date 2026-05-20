@@ -3,13 +3,20 @@
 set -eux
 
 project_root=$(pwd)
-back_static_folder="$project_root/back/static"
+dist_folder="$project_root/dist"
+dist_static_folder="$project_root/dist/static"
+mkdir -p "$dist_static_folder"
 
-cd front
-elm make src/Main.elm --output="$back_static_folder/main.js"
-mkdir -p "$back_static_folder"
-
-cp static/* "$back_static_folder"
+cd "$project_root/front"
+elm make src/Main.elm --output="$dist_static_folder/main.js"
+cp static/* "$dist_static_folder"
 
 cd "$project_root/back"
-cargo run --release
+cargo build --release
+cp target/release/liba-back "$dist_folder"
+cp vapid_private_key.pem "$dist_folder"
+cp vapid_public_key.txt "$dist_folder"
+
+cd "$dist_folder"
+./liba-back
+
