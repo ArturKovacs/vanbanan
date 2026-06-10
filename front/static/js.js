@@ -19,6 +19,7 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+
 /**
  * @param {string} message 
  */
@@ -79,6 +80,9 @@ function subscriptionToJson(subscription) {
     if (!authKey || !p256dhKey) {
         throw new Error('Push subscription is missing required keys (auth or p256dh).');
     }
+    if (!subscription.endpoint) {
+        throw new Error('Push subscription is missing endpoint.');
+    }
     const auth = toPushApiCompatibleBase64(authKey);
     const p256dh = toPushApiCompatibleBase64(p256dhKey);
 
@@ -119,6 +123,24 @@ async function sendSubscriptionToServer(subscription) {
 }
 
 /**
+ * @param {ServiceWorkerRegistration} serviceWorkerRegistration
+ * @param {string} vapidPublicKey
+ */
+async function makeSubscription(serviceWorkerRegistration, vapidPublicKey) {
+    const subscription = await serviceWorkerRegistration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: vapidPublicKey
+    });
+    console.log('New push subscription created:', subscription);
+    try {
+        await sendSubscriptionToServer(subscription);
+    } catch (error) {
+        console.error('Failed to send push subscription to server:', error);
+    }
+    return subscription;
+}
+
+/**
  * @param {ArrayBuffer | string} applicationServerKey Must be from the PushSubscriptionOptions type
  * @param {string} vapidPublicKey a base64 encoded string representing the VAPID public key
  */
@@ -148,32 +170,35 @@ async function main(serviceWorkerRegistration) {
     const vapidPublicKey = await publicKeyResponse.text();
     console.log('Fetched VAPID public key from server:', vapidPublicKey);
 
+    /** 
+     * We don't know if the VAPID key has changed on the server since the subscription was made,
+     * so we need to unsubscribe and resubscribe to make sure we are using the correct VAPID key.
+     * 
+     * @param {PushSubscription} subscription
+     */
+    async function resubscribeToPush(subscription) {
+        try {
+            await subscription.unsubscribe();
+        } catch (error) {
+            console.error('Failed to unsubscribe from push subscription during resubscription process:', error);
+            // We can continue with the resubscription process even if unsubscribing failed, as it may have been a transient error
+        }
+        return await makeSubscription(serviceWorkerRegistration, vapidPublicKey);
+    }
+
     async function tryGetPushSubscription() {
-        const subscription = await serviceWorkerRegistration.pushManager.getSubscription();
+        let subscription = await serviceWorkerRegistration.pushManager.getSubscription();
         console.log('serviceWorkerRegistration.pushManager.getSubscription:', subscription);
         if (subscription) {
-            const applicationServerKey = subscription.options.applicationServerKey;
-            console.log('applicationServerKey:', applicationServerKey);
-            if (!applicationServerKey) {
-                console.warn('Existing push subscription found, but it does not have an application server key. This is unexpected and may indicate a problem with the subscription. Resubscribing with the current VAPID public key.');
-                await subscription.unsubscribe();
-                return null;
-            }
-            if (!isMatchingApplicationServerKey(applicationServerKey, vapidPublicKey)) {
-                console.warn('Existing push subscription found, but application server key does not match the current VAPID public key. Resubscribing with the new VAPID public key.');
-                await subscription.unsubscribe();
-                return null;
-            } else {
-                console.log('Existing push subscription found:', subscription);
+            subscription = await resubscribeToPush(subscription);
+        }
+        return subscription;
+    }
 
-                // Send subscription to the server just in case it was not sent before
-                // or the server lost it during a restart
-                try {
-                    await sendSubscriptionToServer(subscription);
-                } catch (error) {
-                    console.error('Failed to send existing push subscription to server:', error);
-                }
-            }
+    async function getOrMakePushSubscription() {
+        let subscription = await tryGetPushSubscription();
+        if (!subscription) {
+            subscription = await makeSubscription(serviceWorkerRegistration, vapidPublicKey);
         }
         return subscription;
     }
@@ -187,18 +212,7 @@ async function main(serviceWorkerRegistration) {
         }
     });
 
-    async function getOrMakePushSubscription() {
-        let subscription = await tryGetPushSubscription();
-        if (!subscription) {
-            subscription = await serviceWorkerRegistration.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: vapidPublicKey
-            });
-            console.log('New push subscription created:', subscription);
-        }
-
-        return subscription;
-    }
+    
 
     app.ports.startWorker.subscribe(async function () {
         console.log('Requesting notification permission and registering service worker');
@@ -224,7 +238,4 @@ async function main(serviceWorkerRegistration) {
             app.ports.subscriptionResultHandler.send(result);
         }
     });
-
-    
 }
-
