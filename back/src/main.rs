@@ -15,7 +15,12 @@ use axum::{
 
 use tower_http::services::ServeDir;
 
-use web_push::*;
+use web_push::{
+    ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
+    WebPushError, WebPushMessageBuilder,
+};
+
+mod db;
 
 struct PushSender {
     subscriptions: Mutex<HashSet<SubscriptionInfo>>,
@@ -57,8 +62,7 @@ impl PushSender {
     ) -> Result<(), WebPushError> {
         let subscriptions = self.subscriptions.lock().await;
         let futures = subscriptions.iter().map(async |subscription_info| {
-            self
-                .send_push_message_for_single(subscription_info, payload, ttl)
+            self.send_push_message_for_single(subscription_info, payload, ttl)
                 .await
         });
 
@@ -83,7 +87,7 @@ impl PushSender {
 
         let cursor = Cursor::new(&self.vapid_private_key);
 
-        let mut sig_builder = match VapidSignatureBuilder::from_pem(cursor, subscription_info){
+        let mut sig_builder = match VapidSignatureBuilder::from_pem(cursor, subscription_info) {
             Ok(builder) => builder,
             Err(e) => {
                 error!("Failed calling VapidSignatureBuilder::from_pem: {:?}", e);
@@ -164,8 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
     let static_dir = ServeDir::new("./static")
         .append_index_html_on_directories(true)
         .fallback(get(serve_index));
-    
-    
+
     let app = Router::new()
         .route("/floor/{floor_id}", get(serve_index))
         .route("/debug", get(serve_index))
@@ -176,7 +179,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
         .fallback_service(static_dir)
         .with_state(shared_state);
 
-
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 
@@ -185,6 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
 
 #[axum::debug_handler]
 async fn serve_index() -> Result<axum::response::Html<String>, String> {
-    let index_content = std::fs::read_to_string("./static/index.html").map_err(|e| e.to_string())?;
+    let index_content =
+        std::fs::read_to_string("./static/index.html").map_err(|e| e.to_string())?;
     Ok(axum::response::Html(index_content))
 }
