@@ -72,9 +72,9 @@ function toPushApiCompatibleBase64(arrayBuffer) {
 
 /**
  * @param {PushSubscription} subscription 
- * @returns {string} A JSON string representing the subscription
+ * @returns {{endpoint: string, keys: { auth: string, p256dh: string }}} A JSON string representing the subscription
  */
-function subscriptionToJson(subscription) {
+function subscriptionToSerializable(subscription) {
     const authKey = subscription.getKey('auth');
     const p256dhKey = subscription.getKey('p256dh');
     if (!authKey || !p256dhKey) {
@@ -86,26 +86,30 @@ function subscriptionToJson(subscription) {
     const auth = toPushApiCompatibleBase64(authKey);
     const p256dh = toPushApiCompatibleBase64(p256dhKey);
 
-    return JSON.stringify({
+    return {
         endpoint: subscription.endpoint,
         keys: {
             auth: auth,
             p256dh: p256dh
         }
-    });
+    };
 }
 
 /**
- * 
  * @param {PushSubscription} subscription 
+ * @param {number} floor
  */
-async function sendSubscriptionToServer(subscription) {
+async function sendSubscriptionToServer(subscription, floor) {
+    const subscriptionBody = {
+        subscription_info: subscriptionToSerializable(subscription),
+        floor: floor
+    };
     const subscriptionResponse = await fetch('/api/subscription', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
         },
-        body: subscriptionToJson(subscription)
+        body: JSON.stringify(subscriptionBody)
     });
 
     if (!subscriptionResponse.ok) {
@@ -116,26 +120,36 @@ async function sendSubscriptionToServer(subscription) {
         } catch (error) {
             console.info('Failed to parse error response from server as JSON. Error was:', error);
         }
-        console.error(errorMessage);
-        // TODO do something about this like save to the local storage whether the subscription
-        // was sent to the server or not and retry later if it wasn't sent successfully
+        throw new Error(errorMessage);
     }
 }
 
 /**
  * @param {ServiceWorkerRegistration} serviceWorkerRegistration
  * @param {string} vapidPublicKey
+ * @param {number[]} floors
  */
-async function makeSubscription(serviceWorkerRegistration, vapidPublicKey) {
+async function makeSubscription(serviceWorkerRegistration, vapidPublicKey, floors) {
     const subscription = await serviceWorkerRegistration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: vapidPublicKey
     });
-    console.log('New push subscription created:', subscription);
-    try {
-        await sendSubscriptionToServer(subscription);
-    } catch (error) {
-        console.error('Failed to send push subscription to server:', error);
+    console.log('New push subscription created for floors:', floors, subscription);
+    const ATTEMPTS = 3;
+    for (const floor of floors) {
+        for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            try {
+                await sendSubscriptionToServer(subscription, floor);
+                return subscription;
+            } catch (error) {
+                console.error(`Attempt ${attempt} to resubscribe to push failed:`, error);
+                if (attempt <= ATTEMPTS) {
+                    console.log(`Retrying sending subscription in 1 second...`);
+                    await sleep(1000);
+                    continue;
+                }
+            }
+        }
     }
     return subscription;
 }
@@ -175,67 +189,93 @@ async function main(serviceWorkerRegistration) {
      * so we need to unsubscribe and resubscribe to make sure we are using the correct VAPID key.
      * 
      * @param {PushSubscription} subscription
+     * @param {number[]} floors
      */
-    async function resubscribeToPush(subscription) {
+    async function resubscribeToPush(subscription, floors) {
         try {
             await subscription.unsubscribe();
         } catch (error) {
             console.error('Failed to unsubscribe from push subscription during resubscription process:', error);
             // We can continue with the resubscription process even if unsubscribing failed, as it may have been a transient error
         }
-        return await makeSubscription(serviceWorkerRegistration, vapidPublicKey);
+        return await makeSubscription(serviceWorkerRegistration, vapidPublicKey, floors);
     }
 
     async function tryGetPushSubscription() {
         let subscription = await serviceWorkerRegistration.pushManager.getSubscription();
         console.log('serviceWorkerRegistration.pushManager.getSubscription:', subscription);
+        /** @type {number[] | null} */
+        let floors = null;
         if (subscription) {
-            subscription = await resubscribeToPush(subscription);
+            const queryParams = new URLSearchParams({ endpoint: subscription.endpoint });
+            const response = await fetch(`/api/subscription?${queryParams}`);
+            const body = await response.json();
+            floors = body.floors;
+            if (!floors) {
+                throw new Error(`Floors was falsy. This is unexpected. floors: ${floors}`);
+            }
+            // TODO get the floors for the subscription from the server and pass them to resubscribeToPush
+            subscription = await resubscribeToPush(subscription, floors);
         }
-        return subscription;
+        return {subscription, floors};
     }
 
-    async function getOrMakePushSubscription() {
+    /** @param {number} floor */
+    async function getOrMakePushSubscription(floor) {
         let subscription = await tryGetPushSubscription();
         if (!subscription) {
-            subscription = await makeSubscription(serviceWorkerRegistration, vapidPublicKey);
+            const floors = [floor];
+            let subscriptionDetails = await makeSubscription(serviceWorkerRegistration, vapidPublicKey, floors);
+            subscription = {
+                subscription: subscriptionDetails,
+                floors: floors
+            };
         }
         return subscription;
     }
 
-    const isSubscribed = Boolean(await tryGetPushSubscription());
+    const subscription = await tryGetPushSubscription();
 
     const app = Elm.Main.init({
         node: document.getElementById("app"),
         flags: {
-            isSubscribed: isSubscribed
+            subscribedToFloors: subscription.floors ?? []
         }
     });
 
-    
-
-    app.ports.startWorker.subscribe(async function () {
-        console.log('Requesting notification permission and registering service worker');
-        let result = "failed";
-        try {
-            const permission = await Notification.requestPermission();
-            
-            if (permission !== 'granted') {
-                console.warn('Notification permission was not granted. Permission is:', permission);
-                return;
-            }
+    app.ports.subscribeToFloor.subscribe(
+        /** @param {number} targetFloor */
+        async function (targetFloor) {
+            console.log('Requesting notification permission and subscribing for notifications for floor', targetFloor);
+            let resultName = "failed";
             try {
-                await getOrMakePushSubscription();
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') {
+                    console.warn('Notification permission was not granted. Permission is:', permission);
+                    return;
+                }
+                try {
+                    const subscription = await tryGetPushSubscription();
+                    if (!subscription.subscription) {
+                        await makeSubscription(serviceWorkerRegistration, vapidPublicKey, [targetFloor]);
+                    } else {
+                        await sendSubscriptionToServer(subscription.subscription, targetFloor);
+                    }
+                } catch (error) {
+                    console.error('Service worker registration failed:', error);
+                    throw error;
+                }
+                resultName = "subscribed";
             } catch (error) {
-                console.error('Service worker registration failed:', error);
-                throw error;
+                resultName = "failed";
+                console.error('An error occurred while requesting notification permission or registering service worker:', error);
+            } finally {
+                const result = {
+                    name: resultName,
+                    floor: targetFloor
+                };
+                app.ports.subscriptionResultHandler.send(result);
             }
-            result = "subscribed";
-        } catch (error) {
-            result = "failed";
-            console.error('An error occurred while requesting notification permission or registering service worker:', error);
-        } finally {
-            app.ports.subscriptionResultHandler.send(result);
         }
-    });
+    );
 }

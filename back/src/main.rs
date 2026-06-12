@@ -1,14 +1,13 @@
-use std::{collections::HashSet, io::Cursor, sync::Arc};
+use std::{io::Cursor, sync::Arc};
 
 use futures::future::join_all;
 
 // use hyper_util::rt::TokioIo;
 use log::{debug, error, info};
-use tokio::sync::Mutex;
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Query, State},
     response::IntoResponse,
     routing::{get, post},
 };
@@ -16,14 +15,38 @@ use axum::{
 use tower_http::services::ServeDir;
 
 use web_push::{
-    ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
-    WebPushError, WebPushMessageBuilder,
+    ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushError, WebPushMessageBuilder
 };
+
+use crate::db::SubscriptionId;
 
 mod db;
 
+/// Data Transfer Objects
+mod dto {
+    use serde::{Deserialize, Serialize};
+    use web_push::SubscriptionInfo;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+    pub struct ExtendedSubscriptionInfo {
+        pub subscription_info: SubscriptionInfo,
+        pub floor: u32,
+    }
+    
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+    pub struct PostMessageBody {
+        pub floor: u32,
+    }
+
+    #[derive(Debug, Serialize)]
+    pub struct GetSubscriptionResponse {
+        pub floors: Vec<u32>,
+    }
+}
+
+
 struct PushSender {
-    subscriptions: Mutex<HashSet<SubscriptionInfo>>,
+    database: db::Database,
     vapid_private_key: String,
     vapid_public_key: String,
     client: HyperWebPushClient,
@@ -33,34 +56,28 @@ impl PushSender {
     /// vapid_private_key should be a PEM-encoded EC private key
     fn new(vapid_private_key: String, vapid_public_key: String) -> Self {
         Self {
-            subscriptions: Mutex::new(HashSet::with_capacity(50)),
+            database: db::Database::new(),
             vapid_private_key,
             vapid_public_key,
             client: HyperWebPushClient::new(),
         }
     }
 
-    async fn add_subscription(&self, subscription_info: SubscriptionInfo) {
-        let mut subscriptions = self.subscriptions.lock().await;
-        debug!(
-            "Adding subscription. Total subscriptions: {}. New subscription: {:?}",
-            subscriptions.len(),
-            subscription_info
-        );
-        subscriptions.insert(subscription_info);
+    async fn add_subscription(&self, subscription_info: SubscriptionInfo, floor: db::Floor) {
+        self.database.add_subscription(subscription_info, floor).await;
     }
 
-    async fn remove_subscription(&self, subscription_info: &SubscriptionInfo) {
-        let mut subscriptions = self.subscriptions.lock().await;
-        subscriptions.remove(subscription_info);
+    async fn remove_subscription(&self, subscription_id: &SubscriptionId) {
+        self.database.remove_subscription(subscription_id).await;
     }
 
     async fn send_push_message(
         &self,
         payload: &[u8],
+        floor: db::Floor,
         ttl: Option<u32>,
     ) -> Result<(), WebPushError> {
-        let subscriptions = self.subscriptions.lock().await;
+        let subscriptions = self.database.get_subscriptions(floor).await;
         let futures = subscriptions.iter().map(async |subscription_info| {
             self.send_push_message_for_single(subscription_info, payload, ttl)
                 .await
@@ -127,21 +144,39 @@ impl PushSender {
 
 async fn subscription_handler(
     State(push_sender): State<Arc<PushSender>>,
-    Json(subscription_info): Json<SubscriptionInfo>,
+    Json(subscription_info): Json<dto::ExtendedSubscriptionInfo>,
 ) -> impl IntoResponse {
-    push_sender.add_subscription(subscription_info).await;
+    push_sender.add_subscription(subscription_info.subscription_info, db::Floor(subscription_info.floor)).await;
     "Subscription added"
+}
+
+async fn subscription_get_handler(
+    State(push_sender): State<Arc<PushSender>>,
+    Query(subscription_id): Query<SubscriptionId>,
+) -> Json<dto::GetSubscriptionResponse> {
+    // TODO the subscrtiption id may not be URI decoded. (it must be uri encoded on the sender side)
+    info!("Received subscription get request for subscription_id: {:?}", subscription_id);
+
+    let subscription_floors = push_sender.database.get_floors_for_subscription(&subscription_id).await;
+    let subscription_floors: Vec<u32> = subscription_floors.into_iter().map(|floor| floor.0).collect();
+    Json(dto::GetSubscriptionResponse { floors: subscription_floors })
 }
 
 async fn post_message_handler(
     State(push_sender): State<Arc<PushSender>>,
-    payload: String,
+    Json(body): Json<dto::PostMessageBody>,
 ) -> impl IntoResponse {
-    debug!("Distributing push message to subscribers: {}", payload);
+    debug!("Distributing push message to subscribers for floor: {}", body.floor);
+
+    let payload = serde_json::to_string(&body).map_err(|e| {
+        error!("Failed to serialize PostMessageBody: {:?}", e);
+        ""
+    })?;
 
     let result = push_sender
-        .send_push_message(payload.as_bytes(), Some(60))
+        .send_push_message(payload.as_bytes(), db::Floor(body.floor), Some(60))
         .await;
+    
     match result {
         Ok(_) => info!("Push message distributed successfully"),
         Err(e) => {
@@ -173,7 +208,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
         .route("/floor/{floor_id}", get(serve_index))
         .route("/debug", get(serve_index))
         .route("/hello", get(async || "Hello, World!"))
-        .route("/api/subscription", post(subscription_handler))
+        .route("/api/subscription", post(subscription_handler).get(subscription_get_handler))
         .route("/api/message", post(post_message_handler))
         .route("/api/public-key", get(get_public_key_handler))
         .fallback_service(static_dir)

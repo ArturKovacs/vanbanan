@@ -2,6 +2,7 @@ port module Main exposing (main)
 
 import Browser
 import Browser.Navigation as Nav
+import Dict exposing (Dict)
 import Element exposing (..)
 import Element.Background as Background
 import Element.Border as Border
@@ -14,14 +15,19 @@ import Url
 import Url.Parser exposing ((</>), Parser, oneOf, s, top)
 
 
+type alias SubscriptionResult = 
+    { name: String
+    , floor: Int
+    }
+
 
 -- PORTS
 
 
-port startWorker : () -> Cmd msg
+port subscribeToFloor : Int -> Cmd msg
 
 
-port subscriptionResultHandler : (String -> msg) -> Sub msg
+port subscriptionResultHandler : (SubscriptionResult -> msg) -> Sub msg
 
 
 
@@ -36,13 +42,15 @@ type Route
 type alias Model =
     { key : Nav.Key
     , url : Url.Url
-    , subscriptionStatus : SubscriptionStatus
+    , subscriptionStatus : Dict Int SubscriptionStatus
     , reportingBananaFoundStatus : ReportingBananaFoundStatus
     }
 
+allFloors : List Int
+allFloors = List.range 0 3
 
 type alias Flags =
-    { isSubscribed : Bool
+    { subscribedToFloors : List Int
     }
 
 
@@ -81,14 +89,23 @@ type ReportingBananaFoundStatus
 
 init : Flags -> Url.Url -> Nav.Key -> ( Model, Cmd Msg )
 init flags url key =
+    let
+        subscriptionStatusList =
+            List.map
+                (\floor ->
+                    ( floor
+                    , if List.member floor flags.subscribedToFloors then
+                        Subscribed
+
+                      else
+                        NotSubscribed
+                    )
+                )
+                allFloors
+    in
     ( { key = key
       , url = url
-      , subscriptionStatus =
-            if flags.isSubscribed then
-                Subscribed
-
-            else
-                NotSubscribed
+      , subscriptionStatus = Dict.fromList subscriptionStatusList
       , reportingBananaFoundStatus = Idle
       }
     , Cmd.none
@@ -104,58 +121,76 @@ type Floor
 
 
 type Msg
-    = StartSubscription
-    | SubscriptionResultSubscribed
-    | SubscriptionResultFailed
-    | SubscriptionResultNotificationsDenied
-    | SubscriptionResultUnknown String
+    = StartSubscription Floor
+    | SubscriptionResultSubscribed Floor
+    | SubscriptionResultFailed Floor
+    | SubscriptionResultNotificationsDenied Floor
+    | SubscriptionResultUnknown Floor String
     | ReportBananaFound Floor -- Send a message to the server which will boradcase it as push messages to everyone
     | ReportBananaFoundResult (Result Http.Error ())
     | LinkClicked Browser.UrlRequest
     | UrlChanged Url.Url
 
 
-subscriptionResultToMessage : String -> Msg
+subscriptionResultToMessage : SubscriptionResult -> Msg
 subscriptionResultToMessage result =
-    case result of
+    case result.name of
         "subscribed" ->
-            SubscriptionResultSubscribed
+            SubscriptionResultSubscribed (Floor result.floor)
 
         "failed" ->
-            SubscriptionResultFailed
+            SubscriptionResultFailed (Floor result.floor)
 
         "notificationsDenied" ->
-            SubscriptionResultNotificationsDenied
+            SubscriptionResultNotificationsDenied (Floor result.floor)
 
         other ->
-            SubscriptionResultUnknown other
+            SubscriptionResultUnknown (Floor result.floor) other
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        StartSubscription ->
-            ( { model | subscriptionStatus = Subscribing }, startWorker () )
+        StartSubscription (Floor floor) ->
+            let
+                newSubscriptionStatus =
+                    Dict.insert floor Subscribing model.subscriptionStatus
+            in
+            ( { model | subscriptionStatus = newSubscriptionStatus }, subscribeToFloor floor )
 
-        SubscriptionResultSubscribed ->
-            ( { model | subscriptionStatus = Subscribed }, Cmd.none )
+        SubscriptionResultSubscribed (Floor floor) ->
+            let
+                newSubscriptionStatus =
+                    Dict.insert floor Subscribed model.subscriptionStatus
+            in
+            ( { model | subscriptionStatus = newSubscriptionStatus }, Cmd.none )
 
-        SubscriptionResultFailed ->
-            ( { model | subscriptionStatus = SubscriptionFailed }, Cmd.none )
+        SubscriptionResultFailed (Floor floor) ->
+            let
+                newSubscriptionStatus =
+                    Dict.insert floor SubscriptionFailed model.subscriptionStatus
+            in
+            ( { model | subscriptionStatus = newSubscriptionStatus }, Cmd.none )
 
-        SubscriptionResultNotificationsDenied ->
-            ( { model | subscriptionStatus = NotificationsDenied }, Cmd.none )
+        SubscriptionResultNotificationsDenied (Floor floor) ->
+            let
+                newSubscriptionStatus =
+                    Dict.insert floor NotificationsDenied model.subscriptionStatus
+            in
+            ( { model | subscriptionStatus = newSubscriptionStatus }, Cmd.none )
 
-        SubscriptionResultUnknown other ->
-            ( { model | subscriptionStatus = SubscriptionStatusUnknown other }, Cmd.none )
+        SubscriptionResultUnknown (Floor floor) other ->
+            let
+                newSubscriptionStatus =
+                    Dict.insert floor (SubscriptionStatusUnknown other) model.subscriptionStatus
+            in
+            ( { model | subscriptionStatus = newSubscriptionStatus }, Cmd.none )
 
         ReportBananaFound (Floor floor) ->
             ( { model | reportingBananaFoundStatus = ReportingBananaFound }
             , Http.post
                 { url = "/api/message"
-
-                -- , body = Http.jsonBody (Json.Encode.object [ ( "floor", Json.Encode.int floor ) ])
-                , body = Http.stringBody "text/plain" ("Banánt láttak a " ++ (String.fromInt floor) ++ ". emeleten!")
+                , body = Http.jsonBody ( Json.Encode.object [("floor", Json.Encode.int floor )])
                 , expect = Http.expectWhatever ReportBananaFoundResult
                 }
             )
@@ -196,8 +231,8 @@ subscriptions _ =
     subscriptionResultHandler subscriptionResultToMessage
 
 
-makeSubscribeButton : Element Msg
-makeSubscribeButton =
+makeSubscribeButton : Floor -> Element Msg
+makeSubscribeButton floor =
     Input.button
         [ Border.rounded 10
         , Border.width 2
@@ -205,7 +240,7 @@ makeSubscribeButton =
         , paddingXY 24 14
         , centerX
         ]
-        { onPress = Just StartSubscription
+        { onPress = Just (StartSubscription floor)
         , label =
             el
                 []
@@ -213,13 +248,16 @@ makeSubscribeButton =
         }
 
 
-subscriptionPanel : Model -> Element Msg
-subscriptionPanel model =
-    case model.subscriptionStatus of
-        NotSubscribed ->
-            makeSubscribeButton
+subscriptionPanel : Model -> Floor -> Element Msg
+subscriptionPanel model floor =
+    let
+        floorInt = case floor of Floor f -> f
+    in
+    case Dict.get floorInt model.subscriptionStatus of
+        Just NotSubscribed ->
+            makeSubscribeButton floor
 
-        Subscribing ->
+        Just Subscribing ->
             el
                 [ Font.size 22
                 , Font.color (rgb255 255 255 120)
@@ -227,7 +265,7 @@ subscriptionPanel model =
                 ]
                 (text "Feliratkozás...")
 
-        Subscribed ->
+        Just Subscribed ->
             el
                 [ Font.size 22
                 , Font.color (rgb255 0 255 180)
@@ -235,7 +273,7 @@ subscriptionPanel model =
                 ]
                 (text "Feliratkoztál a push értesítésekre.")
 
-        SubscriptionFailed ->
+        Just SubscriptionFailed ->
             el
                 [ Font.size 22
                 , Font.color (rgb255 255 100 100)
@@ -243,7 +281,7 @@ subscriptionPanel model =
                 ]
                 (text "Nem sikerült feliratkozni a push értesítésekre.")
 
-        NotificationsDenied ->
+        Just NotificationsDenied ->
             el
                 [ Font.size 22
                 , Font.color (rgb255 255 100 100)
@@ -251,13 +289,21 @@ subscriptionPanel model =
                 ]
                 (text "Értesítések megtagadva. Engedélyezd a push értesítéseket a böngésződben.")
 
-        SubscriptionStatusUnknown other ->
+        Just (SubscriptionStatusUnknown other) ->
             el
                 [ Font.size 22
                 , Font.color (rgb255 255 100 100)
                 , centerX
                 ]
                 (text ("Ismeretlen hiba történt a push értesítések aktiválása során: " ++ other))
+
+        Nothing ->
+            el
+                [ Font.size 22
+                , Font.color (rgb255 255 100 100)
+                , centerX
+                ]
+                (text ("Váratlan hiba történt. Ismeretlen emelet"))
 
 
 view : Model -> Browser.Document Msg
@@ -315,15 +361,13 @@ homeView model =
             , centerY
             , padding 24
             ]
-            ([ el
+            (el
                 [ Font.size 36
                 , Font.bold
                 , centerX
                 ]
                 (text "Van Banán?")
-             , subscriptionPanel model
-             ]
-                ++ List.map makeFloorLink [ 0, 1, 2, 3 ]
+                :: List.map makeFloorLink allFloors
             )
 
 
@@ -354,7 +398,7 @@ floorView model floor =
                 , centerX
                 ]
                 (text (floorStr ++ ". Emelet"))
-            , subscriptionPanel model
+            , subscriptionPanel model floor
             , Input.button
                 [ Border.rounded 10
                 , Border.width 2

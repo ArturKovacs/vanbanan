@@ -1,20 +1,33 @@
 
-self.addEventListener('install', () => {
+// I don't know if there is a nicer way to get the correct type for self, but this works okay
+/** @type {ServiceWorkerGlobalScope} */
+const selfSW = self;
+
+selfSW.addEventListener('install', () => {
     console.log('Service Worker installed');
-    self.skipWaiting();
+    selfSW.skipWaiting();
 });
 
-self.addEventListener('push', (event) => {
+
+selfSW.addEventListener('push', (event) => {
     console.log('Push event received:', event);
 
-    const message = event.data.text();
+    if (!event.data) {
+        console.warn('Push event has no data');
+        return;
+    }
 
-    self.registration.showNotification('Van Banán?', {
-        body: String(message),
+    const body = event.data.json();
+
+    const floor = body.floor;
+    const definiteArticle = floor === 1 ? 'az' : 'a'; // Floors go from 0 to 3, so this is enough
+
+    selfSW.registration.showNotification('Van Banán?', {
+        body: `Banánt láttak ${definiteArticle} ${floor}. emeleten!`,
     });
-})
+});
 
-self.addEventListener('activate', async () => {
+selfSW.addEventListener('activate', async () => {
     console.log('Service Worker activated!');
 
     // setInterval(async () => {
@@ -27,7 +40,7 @@ self.addEventListener('activate', async () => {
     // }, 10000);
 });
 
-self.addEventListener('notificationclick', (event) => {
+selfSW.addEventListener('notificationclick', (event) => {
     event.notification.close();
 
     // event.waitUntil(
