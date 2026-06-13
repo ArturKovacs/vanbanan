@@ -160,49 +160,50 @@ subscriptionResultToMessage result =
         in
         SubscriptionResultFailed (Floor result.floor)
 
+
 unsubscribeResultToMessage : UnsubscribeResult -> Msg
 unsubscribeResultToMessage result = 
     if result.name == portResultOkName then
-        SubscriptionResultSubscribed (Floor result.floor)
+        UnsubscribeFinishedOk (Floor result.floor)
     else if result.name == portResultFailedName then
-        SubscriptionResultFailed (Floor result.floor)
+        UnsubscribeFinishedFailed (Floor result.floor)
     else
         let
             _ = Debug.log "Received unexpected result" result.name
         in
-        SubscriptionResultFailed (Floor result.floor)
+        UnsubscribeFinishedFailed (Floor result.floor)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     let
-        changeSubscription : Model -> Floor -> SubscriptionStatus -> Model
-        changeSubscription model2 floor newSubscriptionStatus = 
+        changeSubscription : Floor -> SubscriptionStatus -> Model
+        changeSubscription floor newSubscriptionStatus = 
             let
                 floorInt = case floor of Floor f -> f
                 newSubscriptionStatuses =
-                    Dict.insert floorInt newSubscriptionStatus model2.subscriptionStatuses
+                    Dict.insert floorInt newSubscriptionStatus model.subscriptionStatuses
             in
-            { model2 | subscriptionStatuses = newSubscriptionStatuses }
+            { model | subscriptionStatuses = newSubscriptionStatuses }
     in
     case msg of
         StartSubscription floor ->
-            ( changeSubscription model floor Subscribing, subscribeToFloor (case floor of Floor f -> f) )
+            ( changeSubscription floor Subscribing, subscribeToFloor (case floor of Floor f -> f) )
 
         SubscriptionResultSubscribed floor ->
-            ( changeSubscription model floor Subscribed, Cmd.none )
+            ( changeSubscription floor Subscribed, Cmd.none )
 
         SubscriptionResultFailed floor ->
-            ( changeSubscription model floor SubscriptionFailed, Cmd.none )
+            ( changeSubscription floor SubscriptionFailed, Cmd.none )
 
         StartRemovingSubscription floor ->
-            ( changeSubscription model floor Unsubscribing, unsubscribeFromFloor (case floor of Floor f -> f) )
+            ( changeSubscription floor Unsubscribing, unsubscribeFromFloor (case floor of Floor f -> f) )
 
         UnsubscribeFinishedOk floor ->
-            ( changeSubscription model floor NotSubscribed, Cmd.none )
+            ( changeSubscription floor NotSubscribed, Cmd.none )
 
         UnsubscribeFinishedFailed floor ->
-            ( changeSubscription model floor UnsubscribeFailed, Cmd.none )
+            ( changeSubscription floor UnsubscribeFailed, Cmd.none )
 
         ReportBananaFound (Floor floor) ->
             ( { model | reportingBananaFoundStatus = ReportingBananaFound }
@@ -261,13 +262,16 @@ subscriptionPanel model floor =
                 Floor f ->
                     f
 
-        ( isSubscribed, subscriptionInProgress ) =
+        ( isSubscribed, inProgress ) =
             case Dict.get floorInt model.subscriptionStatuses of
                 Just Subscribed ->
                     ( True, False )
 
                 Just Subscribing ->
                     ( False, True )
+
+                Just Unsubscribing ->
+                    ( True, True )
 
                 _ ->
                     ( False, False )
@@ -276,7 +280,7 @@ subscriptionPanel model floor =
         [ Input.checkbox []
             { onChange =
                 \shouldSubscribe ->
-                    if Debug.log "shouldSubscribe" shouldSubscribe then
+                    if shouldSubscribe then
                         StartSubscription floor
 
                     else
@@ -288,7 +292,7 @@ subscriptionPanel model floor =
                     (text "Kérek Push Éretsítéseket")
             }
         , el [ width (px 20) ]
-            (if subscriptionInProgress then
+            (if inProgress then
                 text "⏳"
 
             else

@@ -172,6 +172,7 @@ async fn subscription_delete_handler(
     State(push_sender): State<Arc<PushSender>>,
     Query(subscription): Query<dto::SubscriptionDeleteParams>,
 ) -> impl IntoResponse {
+    debug!("Received subscription delete: {:?}", subscription);
     let subscription_id = SubscriptionId {
         endpoint: subscription.endpoint
     };
