@@ -19,16 +19,23 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const PORT_RESULT_OK_NAME = "ok"
+const PORT_RESULT_FAILED_NAME = "failed"
 
 /**
  * @param {string} message 
  */
 function displayFatalError(message) {
-    const appElement = document.getElementById("app");
+    const appElement = document.querySelector("body div");
     if (appElement === null) {
-        console.error('Not found "app" element');
+        console.error('Not found "app" element, while trying to display', message);
         return;
     }
+    if (!(appElement instanceof HTMLElement)) {
+        console.error('The app element was not an instance of HTMLElement. While trying to display', message);
+        return;
+    }
+    
     appElement.replaceChildren();
 
     appElement.textContent = message;
@@ -95,6 +102,7 @@ function subscriptionToSerializable(subscription) {
     };
 }
 
+
 /**
  * @param {PushSubscription} subscription 
  * @param {number} floor
@@ -105,7 +113,7 @@ async function sendSubscriptionToServer(subscription, floor) {
         floor: floor
     };
     const subscriptionResponse = await fetch('/api/subscription', {
-        method: 'POST',
+        method: "POST",
         headers: {
             'Content-Type': 'application/json'
         },
@@ -113,7 +121,33 @@ async function sendSubscriptionToServer(subscription, floor) {
     });
 
     if (!subscriptionResponse.ok) {
-        let errorMessage = `Failed to send push subscription to server.`;
+        let errorMessage = `Failed to send subscription operation to server.`;
+        try {
+            const errorText = await subscriptionResponse.json();
+            errorMessage += ` Server sent: ${errorText}`;
+        } catch (error) {
+            console.info('Failed to parse error response from server as JSON. Error was:', error);
+        }
+        throw new Error(errorMessage);
+    }
+}
+
+/**
+ * @param {PushSubscription} subscription 
+ * @param {number} floor
+ */
+async function sendUnsubscribeToServer(subscription, floor) {
+    const subscriptionDeleteInfo = {
+        endpoint: subscription.endpoint,
+        floor: floor.toString()
+    };
+    const queryParams = new URLSearchParams(subscriptionDeleteInfo);
+    const subscriptionResponse = await fetch(`/api/subscription?${queryParams}`, {
+        method: "DELETE",
+    });
+
+    if (!subscriptionResponse.ok) {
+        let errorMessage = `Failed to send UNsubscribe operation to server.`;
         try {
             const errorText = await subscriptionResponse.json();
             errorMessage += ` Server sent: ${errorText}`;
@@ -206,6 +240,9 @@ async function main(serviceWorkerRegistration) {
         console.log('serviceWorkerRegistration.pushManager.getSubscription:', subscription);
         /** @type {number[] | null} */
         let floors = null;
+
+        /** @type {{subscription: PushSubscription, floors: number[]} | null} */
+        let result = null;
         if (subscription) {
             const queryParams = new URLSearchParams({ endpoint: subscription.endpoint });
             const response = await fetch(`/api/subscription?${queryParams}`);
@@ -216,8 +253,9 @@ async function main(serviceWorkerRegistration) {
             }
             // TODO get the floors for the subscription from the server and pass them to resubscribeToPush
             subscription = await resubscribeToPush(subscription, floors);
+            result = {subscription, floors};
         }
-        return {subscription, floors};
+        return result;
     }
 
     /** @param {number} floor */
@@ -239,7 +277,7 @@ async function main(serviceWorkerRegistration) {
     const app = Elm.Main.init({
         node: document.getElementById("app"),
         flags: {
-            subscribedToFloors: subscription.floors ?? []
+            subscribedToFloors: subscription?.floors ?? []
         }
     });
 
@@ -247,7 +285,7 @@ async function main(serviceWorkerRegistration) {
         /** @param {number} targetFloor */
         async function (targetFloor) {
             console.log('Requesting notification permission and subscribing for notifications for floor', targetFloor);
-            let resultName = "failed";
+            let resultName = PORT_RESULT_FAILED_NAME;
             try {
                 const permission = await Notification.requestPermission();
                 if (permission !== 'granted') {
@@ -256,7 +294,7 @@ async function main(serviceWorkerRegistration) {
                 }
                 try {
                     const subscription = await tryGetPushSubscription();
-                    if (!subscription.subscription) {
+                    if (!subscription) {
                         await makeSubscription(serviceWorkerRegistration, vapidPublicKey, [targetFloor]);
                     } else {
                         await sendSubscriptionToServer(subscription.subscription, targetFloor);
@@ -265,9 +303,9 @@ async function main(serviceWorkerRegistration) {
                     console.error('Service worker registration failed:', error);
                     throw error;
                 }
-                resultName = "subscribed";
+                resultName = PORT_RESULT_OK_NAME;
             } catch (error) {
-                resultName = "failed";
+                resultName = PORT_RESULT_FAILED_NAME;
                 console.error('An error occurred while requesting notification permission or registering service worker:', error);
             } finally {
                 const result = {
@@ -275,6 +313,28 @@ async function main(serviceWorkerRegistration) {
                     floor: targetFloor
                 };
                 app.ports.subscriptionResultHandler.send(result);
+            }
+        }
+    );
+
+    app.ports.unsubscribeFromFloor.subscribe(
+        /** @param {number} targetFloor */
+        async function (targetFloor) {
+            let resultName = PORT_RESULT_FAILED_NAME
+            try {
+                const subscription = await tryGetPushSubscription();
+                if (!subscription) {
+                    console.error("No Push Manager Subscription found locally, when trying to unsubscribe from floor");
+                    return;
+                }
+                await sendUnsubscribeToServer(subscription.subscription, targetFloor);
+                resultName = PORT_RESULT_OK_NAME
+            } finally {
+                const result = {
+                    name: resultName,
+                    floor: targetFloor
+                };
+                app.ports.unsubscribeResultHandler.send(result)
             }
         }
     );

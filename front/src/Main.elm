@@ -15,19 +15,31 @@ import Url
 import Url.Parser exposing ((</>), Parser, oneOf, s, top)
 
 
-type alias SubscriptionResult = 
-    { name: String
-    , floor: Int
+
+type alias SubscriptionResult =
+    { name : String
+    , floor : Int
+    }
+
+type alias UnsubscribeResult =
+    { name : String
+    , floor : Int
     }
 
 
 -- PORTS
 
+portResultOkName : String
+portResultOkName = "ok"
+portResultFailedName : String
+portResultFailedName = "failed"
+
 
 port subscribeToFloor : Int -> Cmd msg
-
-
 port subscriptionResultHandler : (SubscriptionResult -> msg) -> Sub msg
+
+port unsubscribeFromFloor : Int -> Cmd msg
+port unsubscribeResultHandler : (UnsubscribeResult -> msg) -> Sub msg
 
 
 
@@ -42,12 +54,15 @@ type Route
 type alias Model =
     { key : Nav.Key
     , url : Url.Url
-    , subscriptionStatus : Dict Int SubscriptionStatus
+    , subscriptionStatuses : Dict Int SubscriptionStatus
     , reportingBananaFoundStatus : ReportingBananaFoundStatus
     }
 
+
 allFloors : List Int
-allFloors = List.range 0 3
+allFloors =
+    List.range 0 3
+
 
 type alias Flags =
     { subscribedToFloors : List Int
@@ -77,8 +92,8 @@ type SubscriptionStatus
     | Subscribing
     | Subscribed
     | SubscriptionFailed
-    | NotificationsDenied
-    | SubscriptionStatusUnknown String
+    | Unsubscribing
+    | UnsubscribeFailed
 
 
 type ReportingBananaFoundStatus
@@ -105,7 +120,7 @@ init flags url key =
     in
     ( { key = key
       , url = url
-      , subscriptionStatus = Dict.fromList subscriptionStatusList
+      , subscriptionStatuses = Dict.fromList subscriptionStatusList
       , reportingBananaFoundStatus = Idle
       }
     , Cmd.none
@@ -124,8 +139,9 @@ type Msg
     = StartSubscription Floor
     | SubscriptionResultSubscribed Floor
     | SubscriptionResultFailed Floor
-    | SubscriptionResultNotificationsDenied Floor
-    | SubscriptionResultUnknown Floor String
+    | StartRemovingSubscription Floor
+    | UnsubscribeFinishedOk Floor
+    | UnsubscribeFinishedFailed Floor
     | ReportBananaFound Floor -- Send a message to the server which will boradcase it as push messages to everyone
     | ReportBananaFoundResult (Result Http.Error ())
     | LinkClicked Browser.UrlRequest
@@ -134,63 +150,65 @@ type Msg
 
 subscriptionResultToMessage : SubscriptionResult -> Msg
 subscriptionResultToMessage result =
-    case result.name of
-        "subscribed" ->
-            SubscriptionResultSubscribed (Floor result.floor)
+    if result.name == portResultOkName then
+        SubscriptionResultSubscribed (Floor result.floor)
+    else if result.name == portResultFailedName then
+        SubscriptionResultFailed (Floor result.floor)
+    else
+        let
+            _ = Debug.log "Received unexpected result" result.name
+        in
+        SubscriptionResultFailed (Floor result.floor)
 
-        "failed" ->
-            SubscriptionResultFailed (Floor result.floor)
-
-        "notificationsDenied" ->
-            SubscriptionResultNotificationsDenied (Floor result.floor)
-
-        other ->
-            SubscriptionResultUnknown (Floor result.floor) other
+unsubscribeResultToMessage : UnsubscribeResult -> Msg
+unsubscribeResultToMessage result = 
+    if result.name == portResultOkName then
+        SubscriptionResultSubscribed (Floor result.floor)
+    else if result.name == portResultFailedName then
+        SubscriptionResultFailed (Floor result.floor)
+    else
+        let
+            _ = Debug.log "Received unexpected result" result.name
+        in
+        SubscriptionResultFailed (Floor result.floor)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    let
+        changeSubscription : Model -> Floor -> SubscriptionStatus -> Model
+        changeSubscription model2 floor newSubscriptionStatus = 
+            let
+                floorInt = case floor of Floor f -> f
+                newSubscriptionStatuses =
+                    Dict.insert floorInt newSubscriptionStatus model2.subscriptionStatuses
+            in
+            { model2 | subscriptionStatuses = newSubscriptionStatuses }
+    in
     case msg of
-        StartSubscription (Floor floor) ->
-            let
-                newSubscriptionStatus =
-                    Dict.insert floor Subscribing model.subscriptionStatus
-            in
-            ( { model | subscriptionStatus = newSubscriptionStatus }, subscribeToFloor floor )
+        StartSubscription floor ->
+            ( changeSubscription model floor Subscribing, subscribeToFloor (case floor of Floor f -> f) )
 
-        SubscriptionResultSubscribed (Floor floor) ->
-            let
-                newSubscriptionStatus =
-                    Dict.insert floor Subscribed model.subscriptionStatus
-            in
-            ( { model | subscriptionStatus = newSubscriptionStatus }, Cmd.none )
+        SubscriptionResultSubscribed floor ->
+            ( changeSubscription model floor Subscribed, Cmd.none )
 
-        SubscriptionResultFailed (Floor floor) ->
-            let
-                newSubscriptionStatus =
-                    Dict.insert floor SubscriptionFailed model.subscriptionStatus
-            in
-            ( { model | subscriptionStatus = newSubscriptionStatus }, Cmd.none )
+        SubscriptionResultFailed floor ->
+            ( changeSubscription model floor SubscriptionFailed, Cmd.none )
 
-        SubscriptionResultNotificationsDenied (Floor floor) ->
-            let
-                newSubscriptionStatus =
-                    Dict.insert floor NotificationsDenied model.subscriptionStatus
-            in
-            ( { model | subscriptionStatus = newSubscriptionStatus }, Cmd.none )
+        StartRemovingSubscription floor ->
+            ( changeSubscription model floor Unsubscribing, unsubscribeFromFloor (case floor of Floor f -> f) )
 
-        SubscriptionResultUnknown (Floor floor) other ->
-            let
-                newSubscriptionStatus =
-                    Dict.insert floor (SubscriptionStatusUnknown other) model.subscriptionStatus
-            in
-            ( { model | subscriptionStatus = newSubscriptionStatus }, Cmd.none )
+        UnsubscribeFinishedOk floor ->
+            ( changeSubscription model floor NotSubscribed, Cmd.none )
+
+        UnsubscribeFinishedFailed floor ->
+            ( changeSubscription model floor UnsubscribeFailed, Cmd.none )
 
         ReportBananaFound (Floor floor) ->
             ( { model | reportingBananaFoundStatus = ReportingBananaFound }
             , Http.post
                 { url = "/api/message"
-                , body = Http.jsonBody ( Json.Encode.object [("floor", Json.Encode.int floor )])
+                , body = Http.jsonBody (Json.Encode.object [ ( "floor", Json.Encode.int floor ) ])
                 , expect = Http.expectWhatever ReportBananaFoundResult
                 }
             )
@@ -228,82 +246,96 @@ main =
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    subscriptionResultHandler subscriptionResultToMessage
-
-
-makeSubscribeButton : Floor -> Element Msg
-makeSubscribeButton floor =
-    Input.button
-        [ Border.rounded 10
-        , Border.width 2
-        , Border.color (rgb255 255 215 0)
-        , paddingXY 24 14
-        , centerX
+    Sub.batch
+        [ subscriptionResultHandler subscriptionResultToMessage
+        , unsubscribeResultHandler unsubscribeResultToMessage
         ]
-        { onPress = Just (StartSubscription floor)
-        , label =
-            el
-                []
-                (text "Kérek Push Éretsítéseket")
-        }
+
 
 
 subscriptionPanel : Model -> Floor -> Element Msg
 subscriptionPanel model floor =
     let
-        floorInt = case floor of Floor f -> f
+        floorInt =
+            case floor of
+                Floor f ->
+                    f
+
+        ( isSubscribed, subscriptionInProgress ) =
+            case Dict.get floorInt model.subscriptionStatuses of
+                Just Subscribed ->
+                    ( True, False )
+
+                Just Subscribing ->
+                    ( False, True )
+
+                _ ->
+                    ( False, False )
     in
-    case Dict.get floorInt model.subscriptionStatus of
-        Just NotSubscribed ->
-            makeSubscribeButton floor
+    Element.row [ centerX, spacing 8 ]
+        [ Input.checkbox []
+            { onChange =
+                \shouldSubscribe ->
+                    if Debug.log "shouldSubscribe" shouldSubscribe then
+                        StartSubscription floor
 
-        Just Subscribing ->
-            el
-                [ Font.size 22
-                , Font.color (rgb255 255 255 120)
-                , centerX
-                ]
-                (text "Feliratkozás...")
+                    else
+                        StartRemovingSubscription floor
+            , icon = Input.defaultCheckbox
+            , checked = isSubscribed
+            , label =
+                Input.labelLeft [padding 5]
+                    (text "Kérek Push Éretsítéseket")
+            }
+        , el [ width (px 20) ]
+            (if subscriptionInProgress then
+                text "⏳"
 
-        Just Subscribed ->
-            el
-                [ Font.size 22
-                , Font.color (rgb255 0 255 180)
-                , centerX
-                ]
-                (text "Feliratkoztál a push értesítésekre.")
+            else
+                text ""
+            )
+        ]
 
-        Just SubscriptionFailed ->
-            el
-                [ Font.size 22
-                , Font.color (rgb255 255 100 100)
-                , centerX
-                ]
-                (text "Nem sikerült feliratkozni a push értesítésekre.")
 
-        Just NotificationsDenied ->
-            el
-                [ Font.size 22
-                , Font.color (rgb255 255 100 100)
-                , centerX
-                ]
-                (text "Értesítések megtagadva. Engedélyezd a push értesítéseket a böngésződben.")
 
-        Just (SubscriptionStatusUnknown other) ->
-            el
-                [ Font.size 22
-                , Font.color (rgb255 255 100 100)
-                , centerX
-                ]
-                (text ("Ismeretlen hiba történt a push értesítések aktiválása során: " ++ other))
-
-        Nothing ->
-            el
-                [ Font.size 22
-                , Font.color (rgb255 255 100 100)
-                , centerX
-                ]
-                (text ("Váratlan hiba történt. Ismeretlen emelet"))
+-- case Dict.get floorInt model.subscriptionStatus of
+--     Just NotSubscribed ->
+--         makeSubscribeButton floor
+--     Just Subscribing ->
+--         el
+--             [ Font.size 22
+--             , Font.color (rgb255 255 255 120)
+--             , centerX
+--             ]
+--             (text "Feliratkozás...")
+--     Just Subscribed ->
+--         el
+--             [ Font.size 22
+--             , Font.color (rgb255 0 255 180)
+--             , centerX
+--             ]
+--             (text "Feliratkoztál a push értesítésekre.")
+--     Just SubscriptionFailed ->
+--         el
+--             [ Font.size 22
+--             , Font.color (rgb255 255 100 100)
+--             , centerX
+--             ]
+--             (text "Nem sikerült feliratkozni a push értesítésekre.")
+--     Just (SubscriptionStatusUnknown other) ->
+--         el
+--             [ Font.size 22
+--             , Font.color (rgb255 255 100 100)
+--             , centerX
+--             ]
+--             (text ("Ismeretlen hiba történt a push értesítések aktiválása során: " ++ other))
+--     Nothing ->
+--         el
+--             [ Font.size 22
+--             , Font.color (rgb255 255 100 100)
+--             , centerX
+--             ]
+--             (text ("Váratlan hiba történt. Ismeretlen emelet"))
 
 
 view : Model -> Browser.Document Msg

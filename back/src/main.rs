@@ -42,6 +42,12 @@ mod dto {
     pub struct GetSubscriptionResponse {
         pub floors: Vec<u32>,
     }
+
+    #[derive(Debug, Deserialize)]
+    pub struct SubscriptionDeleteParams {
+        pub endpoint: String,
+        pub floor: u32,
+    }
 }
 
 
@@ -67,8 +73,8 @@ impl PushSender {
         self.database.add_subscription(subscription_info, floor).await;
     }
 
-    async fn remove_subscription(&self, subscription_id: &SubscriptionId) {
-        self.database.remove_subscription(subscription_id).await;
+    async fn remove_subscription(&self, subscription_id: &SubscriptionId, floor: db::Floor) {
+        self.database.remove_subscription(subscription_id, floor).await;
     }
 
     async fn send_push_message(
@@ -162,6 +168,17 @@ async fn subscription_get_handler(
     Json(dto::GetSubscriptionResponse { floors: subscription_floors })
 }
 
+async fn subscription_delete_handler(
+    State(push_sender): State<Arc<PushSender>>,
+    Query(subscription): Query<dto::SubscriptionDeleteParams>,
+) -> impl IntoResponse {
+    let subscription_id = SubscriptionId {
+        endpoint: subscription.endpoint
+    };
+    push_sender.remove_subscription(&subscription_id, db::Floor(subscription.floor)).await;
+    "OK"
+}
+
 async fn post_message_handler(
     State(push_sender): State<Arc<PushSender>>,
     Json(body): Json<dto::PostMessageBody>,
@@ -208,7 +225,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
         .route("/floor/{floor_id}", get(serve_index))
         .route("/debug", get(serve_index))
         .route("/hello", get(async || "Hello, World!"))
-        .route("/api/subscription", post(subscription_handler).get(subscription_get_handler))
+        .route("/api/subscription", post(subscription_handler).get(subscription_get_handler).delete(subscription_delete_handler))
         .route("/api/message", post(post_message_handler))
         .route("/api/public-key", get(get_public_key_handler))
         .fallback_service(static_dir)

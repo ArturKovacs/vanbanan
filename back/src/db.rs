@@ -51,9 +51,11 @@ impl Database {
             .insert(floor);
     }
 
-    pub async fn remove_subscription(&self, subscription: &SubscriptionId) {
+    pub async fn remove_subscription(&self, subscription: &SubscriptionId, floor: Floor) {
         let mut subscriptions = self.subscriptions.lock().await;
-        subscriptions.remove(subscription);
+        if let Some(subscription) = subscriptions.get_mut(subscription) {
+            subscription.floors.remove(&floor);
+        }
     }
 
     /// Returns subscriptions that are subscribed to the given floor
