@@ -350,6 +350,23 @@ update msg model =
 
 -- VIEW
 
+myYellow : Color
+myYellow =
+    rgb255 255 255 120
+
+
+myBlue : Color
+myBlue =
+    rgb255 100 200 255
+
+
+myGray : Color
+myGray =
+    rgb255 35 35 35
+
+myWhite : Color
+myWhite =
+    rgb255 210 210 210
 
 main : Program Flags Model Msg
 main =
@@ -370,6 +387,28 @@ subscriptions _ =
         , unsubscribeResultHandler unsubscribeResultToMessage
         ]
 
+makeBananaStatusPanel : Model -> Floor -> Element Msg
+makeBananaStatusPanel model floor =
+    let
+        floorInt = floorToInt floor
+        hasBanana = case Dict.get floorInt model.bananaFoundStatuses of
+            Just BananaFound -> True
+            _ -> False
+
+        bgColor = if hasBanana then myYellow else myGray
+        fontColor = if hasBanana then myGray else myWhite
+        innerText = if hasBanana then "Van Banán" else "Nincs Banán :("
+    in
+    el
+        [ Background.color bgColor
+        , Font.color fontColor
+        , Border.rounded 10
+        , Font.size 32
+        , Font.bold
+        , padding 32
+        , centerX
+        ]
+        (text innerText)
 
 makeSubscriptionPanel : Model -> Floor -> Element Msg
 makeSubscriptionPanel model floor =
@@ -406,7 +445,7 @@ makeSubscriptionPanel model floor =
             , checked = isSubscribed
             , label =
                 Input.labelLeft [ padding 5 ]
-                    (text "Kérek Push Éretsítéseket")
+                    (text "Kérek Push Értesítéseket")
             }
         , el [ width (px 20) ]
             (if inProgress then
@@ -418,25 +457,37 @@ makeSubscriptionPanel model floor =
         ]
 
 
-makeFloorLink : Int -> Element Msg
-makeFloorLink floorId =
+makeFloorLink : Model -> Int -> Element Msg
+makeFloorLink model floorInt =
     let
         floorStr =
-            String.fromInt floorId
+            String.fromInt floorInt
+        hasBanana = case Dict.get floorInt model.bananaFoundStatuses of
+            Just BananaFound -> True
+            _ -> False
     in
-    Element.link
-        [ Border.rounded 10
-        , Border.width 2
-        , Border.color (rgb255 100 200 255)
-        , paddingXY 24 14
-        , centerX
+    row [ centerX
+        , width (px 200)
         ]
-        { url = "/floor/" ++ floorStr
-        , label =
-            el
-                []
-                (text (floorStr ++ ". Emelet"))
-        }
+        [
+            if hasBanana then el [] (text "🍌") else Element.none
+            , Element.link
+                [ Border.rounded 10
+                , Border.width 2
+                , Border.color myBlue
+                , paddingXY 14 14
+                , centerX
+                ]
+                { url = "/floor/" ++ floorStr
+                , label =
+                    el
+                        [ width fill
+                        , Font.center
+                        ]
+                        (text (floorStr ++ ". Emelet"))
+                }
+            , if hasBanana then el [] (text "🍌") else Element.none
+        ]
 
 
 makeBananaReportButton : Model -> Floor -> Element Msg
@@ -445,22 +496,28 @@ makeBananaReportButton model floor =
         floorInt =
             floorToInt floor
 
-        reportBananaTuple =
-            ( "Látok banánt a konyhában!", Just (ReportBananaFound floor) )
+        notFoundAttributes = [ Border.color myYellow ]
+        foundAttributes = [ Border.color myWhite, Border.dotted]
 
-        ( innerText, onPress ) =
+        reportBananaTuple =
+            ( "Módosítom, van banán a konyhában!"
+            , Just (ReportBananaFound floor)
+            , notFoundAttributes
+            )
+
+        ( innerText, onPress, attributes ) =
             case Dict.get floorInt model.bananaFoundStatuses of
                 Just BananaNotFound ->
                     reportBananaTuple
 
                 Just BananaFound ->
-                    ( "Már nem látok banánt a konyhában", Just (ReportBananaNotFound floor) )
+                    ( "Módosítom, elfogyott a banán :(", Just (ReportBananaNotFound floor), foundAttributes )
 
                 Just ReportingBananaFound ->
-                    ( "⏳", Nothing )
+                    ( "⏳", Nothing, notFoundAttributes )
 
                 Just ReportingBananaNotFound ->
-                    ( "⏳", Nothing )
+                    ( "⏳", Nothing, foundAttributes )
 
                 {-
                    Initially the banana status database is empty,
@@ -471,12 +528,12 @@ makeBananaReportButton model floor =
                     reportBananaTuple
     in
     Input.button
-        [ Border.rounded 10
+        ([ Border.rounded 10
         , Border.width 2
-        , Border.color (rgb255 255 215 0)
         , paddingXY 24 14
         , centerX
-        ]
+        ] ++
+        attributes)
         { onPress = onPress
         , label =
             el
@@ -507,8 +564,8 @@ view model =
 homeView : Model -> Html.Html Msg
 homeView model =
     layout
-        [ Background.color (rgb255 35 35 35)
-        , Font.color (rgb255 255 255 120)
+        [ Background.color myGray
+        , Font.color myYellow
         ]
     <|
         column
@@ -525,7 +582,7 @@ homeView model =
                 , centerX
                 ]
                 (text "Van Banán?")
-                :: List.map makeFloorLink allFloors
+                :: List.map (makeFloorLink model) allFloors
             )
 
 
@@ -536,8 +593,8 @@ floorView model floor =
             String.fromInt (floorToInt floor)
     in
     layout
-        [ Background.color (rgb255 35 35 35)
-        , Font.color (rgb255 255 255 120)
+        [ Background.color myGray
+        , Font.color myYellow
         ]
     <|
         column
@@ -554,12 +611,13 @@ floorView model floor =
                 , centerX
                 ]
                 (text (floorStr ++ ". Emelet"))
+            , makeBananaStatusPanel model floor
             , makeSubscriptionPanel model floor
             , makeBananaReportButton model floor
             , Element.link
                 [ Border.rounded 10
                 , Border.width 2
-                , Border.color (rgb255 100 200 255)
+                , Border.color myBlue
                 , paddingXY 24 14
                 , centerX
                 ]
