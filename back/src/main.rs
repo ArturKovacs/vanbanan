@@ -18,7 +18,7 @@ use web_push::{
     ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder,
 };
 
-use crate::db::SubscriptionId;
+use crate::db::{BananaState, Floor, SubscriptionId};
 
 mod db;
 
@@ -48,16 +48,22 @@ mod dto {
         pub endpoint: String,
         pub floor: u32,
     }
+
+    #[derive(Debug, Deserialize)]
+    pub struct BananaStateForFloor {
+        pub floor: u32,
+        pub has_banana: bool,
+    }
 }
 
-struct PushSender {
+struct Application {
     database: db::Database,
     vapid_private_key: String,
     vapid_public_key: String,
     client: HyperWebPushClient,
 }
 
-impl PushSender {
+impl Application {
     /// vapid_private_key should be a PEM-encoded EC private key
     fn new(vapid_private_key: String, vapid_public_key: String) -> Self {
         Self {
@@ -78,6 +84,14 @@ impl PushSender {
         self.database
             .remove_subscription(subscription_id, floor)
             .await
+    }
+
+    async fn get_banana_states(&self) -> Result<BananaState, io::Error> {
+        self.database.get_banana_states().await
+    }
+
+    async fn set_banana_for_floor(&self, floor: db::Floor, has_banana: bool) -> Result<(), io::Error> {
+        self.database.set_banana_state_for_floor(floor, has_banana).await
     }
 
     async fn send_push_message(
@@ -155,10 +169,10 @@ impl PushSender {
 }
 
 async fn handle_posting_subscription(
-    State(push_sender): State<Arc<PushSender>>,
+    State(application): State<Arc<Application>>,
     Json(subscription_info): Json<dto::ExtendedSubscriptionInfo>,
 ) -> Result<(), ()> {
-    push_sender
+    application
         .add_subscription(
             subscription_info.subscription_info,
             db::Floor(subscription_info.floor),
@@ -171,7 +185,7 @@ async fn handle_posting_subscription(
 }
 
 async fn handle_getting_subscription(
-    State(push_sender): State<Arc<PushSender>>,
+    State(application): State<Arc<Application>>,
     Query(subscription_id): Query<SubscriptionId>,
 ) -> Result<Json<dto::GetSubscriptionResponse>, ()> {
     // TODO the subscrtiption id may not be URI decoded. (it must be uri encoded on the sender side)
@@ -180,7 +194,7 @@ async fn handle_getting_subscription(
         subscription_id
     );
 
-    let subscription_floors_result = push_sender
+    let subscription_floors_result = application
         .database
         .get_floors_for_subscription(&subscription_id)
         .await;
@@ -204,14 +218,14 @@ async fn handle_getting_subscription(
 }
 
 async fn handle_deleting_subscription(
-    State(push_sender): State<Arc<PushSender>>,
+    State(application): State<Arc<Application>>,
     Query(subscription): Query<dto::SubscriptionDeleteParams>,
 ) -> Result<(), ()> {
     debug!("Received subscription delete: {:?}", subscription);
     let subscription_id = SubscriptionId {
         endpoint: subscription.endpoint,
     };
-    push_sender
+    application
         .remove_subscription(&subscription_id, db::Floor(subscription.floor))
         .await
         .map_err(|e| {
@@ -221,7 +235,7 @@ async fn handle_deleting_subscription(
 }
 
 async fn handle_posting_message(
-    State(push_sender): State<Arc<PushSender>>,
+    State(application): State<Arc<Application>>,
     Json(body): Json<dto::PostMessageBody>,
 ) -> Result<(), ()> {
     debug!(
@@ -233,7 +247,7 @@ async fn handle_posting_message(
         error!("Failed to serialize PostMessageBody: {:?}", e);
     })?;
 
-    let result = push_sender
+    let result = application
         .send_push_message(payload.as_bytes(), db::Floor(body.floor), Some(60))
         .await;
 
@@ -248,9 +262,27 @@ async fn handle_posting_message(
 }
 
 async fn handle_getting_public_key(
-    State(push_sender): State<Arc<PushSender>>,
+    State(application): State<Arc<Application>>,
 ) -> impl IntoResponse {
-    push_sender.vapid_public_key.clone()
+    application.vapid_public_key.clone()
+}
+
+async fn handle_getting_banana(
+    State(application): State<Arc<Application>>,
+) -> Result<Json<db::BananaState>, ()> {
+    application.get_banana_states().await.map_err(|e| {
+        error!("Failed to get_banana_states: {e}");
+    }).map(Json)
+}
+
+async fn handle_posting_banana(
+    State(application): State<Arc<Application>>,
+    Json(banana_state_for_floor): Json<dto::BananaStateForFloor>,
+) -> Result<(), ()> {
+    let dto::BananaStateForFloor {floor, has_banana} = banana_state_for_floor;
+    application.set_banana_for_floor(Floor(floor), has_banana).await.map_err(|e| {
+        error!("Failed to set_banana_for_floor: {e}");
+    })
 }
 
 #[tokio::main]
@@ -260,7 +292,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
     let vapid_private_key = std::fs::read_to_string("vapid_private_key.pem")?;
     let vapid_public_key = std::fs::read_to_string("vapid_public_key.txt")?;
 
-    let shared_state = Arc::new(PushSender::new(vapid_private_key, vapid_public_key));
+    let shared_state = Arc::new(Application::new(vapid_private_key, vapid_public_key));
 
     let static_dir = ServeDir::new("./static")
         .append_index_html_on_directories(true)
@@ -278,6 +310,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
         )
         .route("/api/message", post(handle_posting_message))
         .route("/api/public-key", get(handle_getting_public_key))
+        .route("/api/banana", get(handle_getting_banana).post(handle_posting_banana))
         .fallback_service(static_dir)
         .with_state(shared_state);
 
