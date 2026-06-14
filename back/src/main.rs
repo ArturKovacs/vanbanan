@@ -24,6 +24,8 @@ mod db;
 
 /// Data Transfer Objects
 mod dto {
+    use std::collections::HashMap;
+
     use serde::{Deserialize, Serialize};
     use web_push::SubscriptionInfo;
 
@@ -54,6 +56,10 @@ mod dto {
         pub floor: u32,
         pub has_banana: bool,
     }
+
+    /// - key: A floor
+    /// - value: `true` if there are bananas at the floor given by key. `false` otherwise.
+    pub type BananaStates = HashMap<u32, bool>;
 }
 
 struct Application {
@@ -269,10 +275,12 @@ async fn handle_getting_public_key(
 
 async fn handle_getting_banana(
     State(application): State<Arc<Application>>,
-) -> Result<Json<db::BananaState>, ()> {
+) -> Result<Json<dto::BananaStates>, ()> {
     application.get_banana_states().await.map_err(|e| {
         error!("Failed to get_banana_states: {e}");
-    }).map(Json)
+    }).map(|state| {
+        Json(state.into_iter().map(|(floor, value)| (floor.0, value)).collect())
+    })
 }
 
 async fn handle_posting_banana(
