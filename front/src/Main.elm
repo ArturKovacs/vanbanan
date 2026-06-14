@@ -15,11 +15,11 @@ import Url
 import Url.Parser exposing ((</>), Parser, oneOf, s, top)
 
 
-
 type alias SubscriptionResult =
     { name : String
     , floor : Int
     }
+
 
 type alias UnsubscribeResult =
     { name : String
@@ -27,18 +27,29 @@ type alias UnsubscribeResult =
     }
 
 
+
 -- PORTS
 
+
 portResultOkName : String
-portResultOkName = "ok"
+portResultOkName =
+    "ok"
+
+
 portResultFailedName : String
-portResultFailedName = "failed"
+portResultFailedName =
+    "failed"
 
 
 port subscribeToFloor : Int -> Cmd msg
+
+
 port subscriptionResultHandler : (SubscriptionResult -> msg) -> Sub msg
 
+
 port unsubscribeFromFloor : Int -> Cmd msg
+
+
 port unsubscribeResultHandler : (UnsubscribeResult -> msg) -> Sub msg
 
 
@@ -66,7 +77,7 @@ allFloors =
 
 type alias Flags =
     { subscribedToFloors : List Int
-    , bananaStates : List (Int, Bool)
+    , bananaStates : List ( Int, Bool )
     }
 
 
@@ -102,7 +113,10 @@ type BananaFoundStatus
     | ReportingBananaFound
     | BananaFound
     | ReportingBananaNotFound
-    -- | FinishedReportingBananaFound (Result Http.Error ())
+
+
+
+-- | FinishedReportingBananaFound (Result Http.Error ())
 
 
 init : Flags -> Url.Url -> Nav.Key -> ( Model, Cmd Msg )
@@ -121,7 +135,20 @@ init flags url key =
                 )
                 allFloors
 
-        bananaStatuses = Dict.fromList (List.map (\(floor, hasBanana) -> (floor, if hasBanana then BananaFound else BananaNotFound)) flags.bananaStates)
+        bananaStatuses =
+            Dict.fromList
+                (List.map
+                    (\( floor, hasBanana ) ->
+                        ( floor
+                        , if hasBanana then
+                            BananaFound
+
+                          else
+                            BananaNotFound
+                        )
+                    )
+                    flags.bananaStates
+                )
     in
     ( { key = key
       , url = url
@@ -139,8 +166,13 @@ init flags url key =
 type Floor
     = Floor Int
 
+
 floorToInt : Floor -> Int
-floorToInt floor = case floor of Floor f -> f
+floorToInt floor =
+    case floor of
+        Floor f ->
+            f
+
 
 type Msg
     = StartSubscription Floor
@@ -161,24 +193,30 @@ subscriptionResultToMessage : SubscriptionResult -> Msg
 subscriptionResultToMessage result =
     if result.name == portResultOkName then
         GotSubscribeOk (Floor result.floor)
+
     else if result.name == portResultFailedName then
         GotSubscribeError (Floor result.floor)
+
     else
         let
-            _ = Debug.log "Received unexpected result" result.name
+            _ =
+                Debug.log "Received unexpected result" result.name
         in
         GotSubscribeError (Floor result.floor)
 
 
 unsubscribeResultToMessage : UnsubscribeResult -> Msg
-unsubscribeResultToMessage result = 
+unsubscribeResultToMessage result =
     if result.name == portResultOkName then
         GotUnsubscribeOk (Floor result.floor)
+
     else if result.name == portResultFailedName then
         GotUnsubscribeError (Floor result.floor)
+
     else
         let
-            _ = Debug.log "Received unexpected result" result.name
+            _ =
+                Debug.log "Received unexpected result" result.name
         in
         GotUnsubscribeError (Floor result.floor)
 
@@ -187,9 +225,13 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     let
         changeSubscription : Floor -> SubscriptionStatus -> Model
-        changeSubscription floor newSubscriptionStatus = 
+        changeSubscription floor newSubscriptionStatus =
             let
-                floorInt = case floor of Floor f -> f
+                floorInt =
+                    case floor of
+                        Floor f ->
+                            f
+
                 newSubscriptionStatuses =
                     Dict.insert floorInt newSubscriptionStatus model.subscriptionStatuses
             in
@@ -198,7 +240,11 @@ update msg model =
         changeBananaStatus : Floor -> BananaFoundStatus -> Model
         changeBananaStatus floor newBananaStatus =
             let
-                floorInt = case floor of Floor f -> f
+                floorInt =
+                    case floor of
+                        Floor f ->
+                            f
+
                 newBananaStatuses =
                     Dict.insert floorInt newBananaStatus model.bananaFoundStatuses
             in
@@ -206,7 +252,13 @@ update msg model =
     in
     case msg of
         StartSubscription floor ->
-            ( changeSubscription floor Subscribing, subscribeToFloor (case floor of Floor f -> f) )
+            ( changeSubscription floor Subscribing
+            , subscribeToFloor
+                (case floor of
+                    Floor f ->
+                        f
+                )
+            )
 
         GotSubscribeOk floor ->
             ( changeSubscription floor Subscribed, Cmd.none )
@@ -215,17 +267,26 @@ update msg model =
             ( changeSubscription floor SubscriptionFailed, Cmd.none )
 
         StartRemovingSubscription floor ->
-            ( changeSubscription floor Unsubscribing, unsubscribeFromFloor (case floor of Floor f -> f) )
+            ( changeSubscription floor Unsubscribing
+            , unsubscribeFromFloor
+                (case floor of
+                    Floor f ->
+                        f
+                )
+            )
 
         GotUnsubscribeOk floor ->
             ( changeSubscription floor NotSubscribed, Cmd.none )
 
         GotUnsubscribeError floor ->
             ( changeSubscription floor UnsubscribeFailed, Cmd.none )
-            
+
         ReportBananaFound floor ->
             let
-                floorInt = case floor of Floor f -> f
+                floorInt =
+                    case floor of
+                        Floor f ->
+                            f
             in
             ( changeBananaStatus floor ReportingBananaFound
             , Http.post
@@ -237,15 +298,22 @@ update msg model =
 
         ReportBananaFoundResult floor result ->
             let
-                newBananaFoundStatus = case result of
-                    Ok _ -> BananaFound
-                    Err _ -> BananaNotFound
+                newBananaFoundStatus =
+                    case result of
+                        Ok _ ->
+                            BananaFound
+
+                        Err _ ->
+                            BananaNotFound
             in
             ( changeBananaStatus floor newBananaFoundStatus, Cmd.none )
 
         ReportBananaNotFound floor ->
             let
-                floorInt = case floor of Floor f -> f
+                floorInt =
+                    case floor of
+                        Floor f ->
+                            f
             in
             ( changeBananaStatus floor ReportingBananaNotFound
             , Http.post
@@ -257,9 +325,13 @@ update msg model =
 
         ReportBananaNotFoundResult floor result ->
             let
-                newBananaFoundStatus = case result of
-                    Ok _ -> BananaNotFound
-                    Err _ -> BananaFound
+                newBananaFoundStatus =
+                    case result of
+                        Ok _ ->
+                            BananaNotFound
+
+                        Err _ ->
+                            BananaFound
             in
             ( changeBananaStatus floor newBananaFoundStatus, Cmd.none )
 
@@ -299,7 +371,6 @@ subscriptions _ =
         ]
 
 
-
 makeSubscriptionPanel : Model -> Floor -> Element Msg
 makeSubscriptionPanel model floor =
     let
@@ -334,14 +405,14 @@ makeSubscriptionPanel model floor =
             , icon = Input.defaultCheckbox
             , checked = isSubscribed
             , label =
-                Input.labelLeft [padding 5]
+                Input.labelLeft [ padding 5 ]
                     (text "Kérek Push Éretsítéseket")
             }
         , el [ width (px 20) ]
             (if inProgress then
                 text "⏳"
 
-            else
+             else
                 text ""
             )
         ]
@@ -367,23 +438,37 @@ makeFloorLink floorId =
                 (text (floorStr ++ ". Emelet"))
         }
 
+
 makeBananaReportButton : Model -> Floor -> Element Msg
 makeBananaReportButton model floor =
     let
-        floorInt = floorToInt floor
-        reportBananaTuple = ("Látok banánt a konyhában!", Just (ReportBananaFound floor))
-        (innerText, onPress) = case Dict.get floorInt model.bananaFoundStatuses of
-            Just BananaNotFound -> reportBananaTuple
-            Just BananaFound -> ("Már nem látok banánt a konyhában", Just (ReportBananaNotFound floor))
-            Just ReportingBananaFound -> ("⏳", Nothing)
-            Just ReportingBananaNotFound -> ("⏳", Nothing)
+        floorInt =
+            floorToInt floor
 
-            {-
-            Initially the banana status database is empty,
-            so no floor will be found in the dictionary.
-            This is normal, and it means that no banana is found for the floors.
-            -}
-            Nothing -> reportBananaTuple
+        reportBananaTuple =
+            ( "Látok banánt a konyhában!", Just (ReportBananaFound floor) )
+
+        ( innerText, onPress ) =
+            case Dict.get floorInt model.bananaFoundStatuses of
+                Just BananaNotFound ->
+                    reportBananaTuple
+
+                Just BananaFound ->
+                    ( "Már nem látok banánt a konyhában", Just (ReportBananaNotFound floor) )
+
+                Just ReportingBananaFound ->
+                    ( "⏳", Nothing )
+
+                Just ReportingBananaNotFound ->
+                    ( "⏳", Nothing )
+
+                {-
+                   Initially the banana status database is empty,
+                   so no floor will be found in the dictionary.
+                   This is normal, and it means that no banana is found for the floors.
+                -}
+                Nothing ->
+                    reportBananaTuple
     in
     Input.button
         [ Border.rounded 10
@@ -418,6 +503,7 @@ view model =
     , body = [ content ]
     }
 
+
 homeView : Model -> Html.Html Msg
 homeView model =
     layout
@@ -442,10 +528,12 @@ homeView model =
                 :: List.map makeFloorLink allFloors
             )
 
+
 floorView : Model -> Floor -> Html.Html Msg
 floorView model floor =
     let
-        floorStr = String.fromInt (floorToInt floor)
+        floorStr =
+            String.fromInt (floorToInt floor)
     in
     layout
         [ Background.color (rgb255 35 35 35)

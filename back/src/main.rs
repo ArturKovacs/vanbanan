@@ -1,4 +1,7 @@
-use std::{io::{self, Cursor}, sync::Arc};
+use std::{
+    io::{self, Cursor},
+    sync::Arc,
+};
 
 use futures::future::join_all;
 
@@ -15,7 +18,8 @@ use axum::{
 use tower_http::services::ServeDir;
 
 use web_push::{
-    ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder,
+    ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
+    WebPushMessageBuilder,
 };
 
 use crate::db::{BananaState, Floor, SubscriptionId};
@@ -73,20 +77,28 @@ impl Application {
     /// vapid_private_key should be a PEM-encoded EC private key
     fn new(vapid_private_key: String, vapid_public_key: String) -> Self {
         Self {
-            database: db::Database::new( Default::default()),
+            database: db::Database::new(Default::default()),
             vapid_private_key,
             vapid_public_key,
             client: HyperWebPushClient::new(),
         }
     }
 
-    async fn add_subscription(&self, subscription_info: SubscriptionInfo, floor: db::Floor) -> Result<(), io::Error> {
+    async fn add_subscription(
+        &self,
+        subscription_info: SubscriptionInfo,
+        floor: db::Floor,
+    ) -> Result<(), io::Error> {
         self.database
             .add_subscription(subscription_info, floor)
             .await
     }
 
-    async fn remove_subscription(&self, subscription_id: &SubscriptionId, floor: db::Floor) -> Result<(), io::Error> {
+    async fn remove_subscription(
+        &self,
+        subscription_id: &SubscriptionId,
+        floor: db::Floor,
+    ) -> Result<(), io::Error> {
         self.database
             .remove_subscription(subscription_id, floor)
             .await
@@ -96,8 +108,14 @@ impl Application {
         self.database.get_banana_states().await
     }
 
-    async fn set_banana_for_floor(&self, floor: db::Floor, has_banana: bool) -> Result<(), io::Error> {
-        self.database.set_banana_state_for_floor(floor, has_banana).await
+    async fn set_banana_for_floor(
+        &self,
+        floor: db::Floor,
+        has_banana: bool,
+    ) -> Result<(), io::Error> {
+        self.database
+            .set_banana_state_for_floor(floor, has_banana)
+            .await
     }
 
     async fn distribute_banana_message(&self, body: &dto::PostMessageBody) -> Result<(), ()> {
@@ -130,7 +148,11 @@ impl Application {
         floor: db::Floor,
         ttl: Option<u32>,
     ) -> Result<(), String> {
-        let subscriptions = self.database.get_subscriptions(floor).await.map_err(|e| format!("Error during get_subscriptions. {e}"))?;
+        let subscriptions = self
+            .database
+            .get_subscriptions(floor)
+            .await
+            .map_err(|e| format!("Error during get_subscriptions. {e}"))?;
         let futures = subscriptions.iter().map(async |subscription_info| {
             self.send_push_message_for_single(subscription_info, payload, ttl)
                 .await
@@ -258,9 +280,7 @@ async fn handle_deleting_subscription(
     application
         .remove_subscription(&subscription_id, db::Floor(subscription.floor))
         .await
-        .map_err(|e| {
-            error!("Error during remove_subscription. {e}")
-        })?;
+        .map_err(|e| error!("Error during remove_subscription. {e}"))?;
     Ok(())
 }
 
@@ -273,26 +293,36 @@ async fn handle_getting_public_key(
 async fn handle_getting_banana(
     State(application): State<Arc<Application>>,
 ) -> Result<Json<dto::BananaStates>, ()> {
-    application.get_banana_states().await.map_err(|e| {
-        error!("Failed to get_banana_states: {e}");
-    }).map(|state| {
-        Json(state.into_iter().map(|(floor, value)| (floor.0, value)).collect())
-    })
+    application
+        .get_banana_states()
+        .await
+        .map_err(|e| {
+            error!("Failed to get_banana_states: {e}");
+        })
+        .map(|state| {
+            Json(
+                state
+                    .into_iter()
+                    .map(|(floor, value)| (floor.0, value))
+                    .collect(),
+            )
+        })
 }
 
 async fn handle_posting_banana(
     State(application): State<Arc<Application>>,
     Json(banana_state_for_floor): Json<dto::BananaStateForFloor>,
 ) -> Result<(), ()> {
-    let dto::BananaStateForFloor {floor, has_banana} = banana_state_for_floor;
-    application.set_banana_for_floor(Floor(floor), has_banana).await.map_err(|e| {
-        error!("Failed to set_banana_for_floor: {e}");
-    })?;
+    let dto::BananaStateForFloor { floor, has_banana } = banana_state_for_floor;
+    application
+        .set_banana_for_floor(Floor(floor), has_banana)
+        .await
+        .map_err(|e| {
+            error!("Failed to set_banana_for_floor: {e}");
+        })?;
 
     if has_banana {
-        let message = dto::PostMessageBody {
-            floor: floor
-        };
+        let message = dto::PostMessageBody { floor: floor };
         application.distribute_banana_message(&message).await?;
     }
     Ok(())
@@ -322,7 +352,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
                 .delete(handle_deleting_subscription),
         )
         .route("/api/public-key", get(handle_getting_public_key))
-        .route("/api/banana", get(handle_getting_banana).post(handle_posting_banana))
+        .route(
+            "/api/banana",
+            get(handle_getting_banana).post(handle_posting_banana),
+        )
         .fallback_service(static_dir)
         .with_state(shared_state);
 
