@@ -59,7 +59,7 @@ if ('serviceWorker' in navigator) {
         console.error('Failed to register service worker:', error);
     });
 } else {
-    displayFatalError("This website requires service worker support, but it seems that your browser does not support service workers.");
+    displayFatalError("This website requires service worker support, but it seems that your browser does not support them.");
 
     console.warn('Service workers are not supported in this browser.');
 }
@@ -100,6 +100,17 @@ function subscriptionToSerializable(subscription) {
             p256dh: p256dh
         }
     };
+}
+
+/** @returns {Promise<{[floor: string]: boolean}>} The states object */
+async function getBananaStates() {
+    const response = await fetch("/api/banana");
+    if (!response.ok) {
+        throw new Error("Failed to get banana states");
+    }
+    const body = await response.json();
+
+    return body;
 }
 
 
@@ -273,11 +284,14 @@ async function main(serviceWorkerRegistration) {
     }
 
     const subscription = await tryGetPushSubscription();
+    const bananaStatesObject = await getBananaStates();
+    const bananaStatesArray = Object.entries(bananaStatesObject).map(([floorStr, hasBanana]) => [parseInt(floorStr), hasBanana]);
 
     const app = Elm.Main.init({
         node: document.getElementById("app"),
         flags: {
-            subscribedToFloors: subscription?.floors ?? []
+            subscribedToFloors: subscription?.floors ?? [],
+            bananaStates: bananaStatesArray
         }
     });
 

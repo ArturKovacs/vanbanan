@@ -66,6 +66,7 @@ allFloors =
 
 type alias Flags =
     { subscribedToFloors : List Int
+    , bananaStates : List (Int, Bool)
     }
 
 
@@ -119,11 +120,13 @@ init flags url key =
                     )
                 )
                 allFloors
+
+        bananaStatuses = Dict.fromList (List.map (\(floor, hasBanana) -> (floor, if hasBanana then BananaFound else BananaNotFound)) flags.bananaStates)
     in
     ( { key = key
       , url = url
       , subscriptionStatuses = Dict.fromList subscriptionStatusList
-      , bananaFoundStatuses = Dict.empty
+      , bananaFoundStatuses = bananaStatuses
       }
     , Cmd.none
     )
