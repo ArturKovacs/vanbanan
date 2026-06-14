@@ -14,7 +14,13 @@ ssh "$TARGET_HOST" "mkdir -p /home/ec2-user/LIBA"
 echo "Stopping liba-back service..."
 ssh "$TARGET_HOST" "sudo systemctl stop liba-back || true"
 ssh "$TARGET_HOST" "until ! sudo systemctl is-active --quiet liba-back; do sleep 0.5; done"
+
+# move the database files just until the copying finishes
+mkdir -p "./tmpdb/"
+mv ./dist/*db.msgpack ./tmpdb/
 scp -r ./dist/* "$TARGET_HOST":/home/ec2-user/LIBA/
+mv ./tmpdb/*db.msgpack ./dist/ 
+
 ssh "$TARGET_HOST" "sudo chown -R ec2-user:ec2-user /home/ec2-user/LIBA"
 ssh "$TARGET_HOST" "sudo chmod +x /home/ec2-user/LIBA/liba-back"
 

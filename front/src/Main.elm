@@ -475,7 +475,7 @@ makeFloorLink model floorInt =
                 [ Border.rounded 10
                 , Border.width 2
                 , Border.color myBlue
-                , paddingXY 14 14
+                , paddingXY 20 14
                 , centerX
                 ]
                 { url = "/floor/" ++ floorStr
@@ -570,7 +570,6 @@ homeView model =
     <|
         column
             [ width fill
-            , height fill
             , spacing 24
             , centerX
             , centerY
@@ -599,7 +598,6 @@ floorView model floor =
     <|
         column
             [ width fill
-            , height fill
             , spacing 24
             , centerX
             , centerY
