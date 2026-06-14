@@ -350,6 +350,7 @@ update msg model =
 
 -- VIEW
 
+
 myYellow : Color
 myYellow =
     rgb255 255 255 120
@@ -364,9 +365,11 @@ myGray : Color
 myGray =
     rgb255 35 35 35
 
+
 myWhite : Color
 myWhite =
     rgb255 210 210 210
+
 
 main : Program Flags Model Msg
 main =
@@ -387,17 +390,41 @@ subscriptions _ =
         , unsubscribeResultHandler unsubscribeResultToMessage
         ]
 
+
 makeBananaStatusPanel : Model -> Floor -> Element Msg
 makeBananaStatusPanel model floor =
     let
-        floorInt = floorToInt floor
-        hasBanana = case Dict.get floorInt model.bananaFoundStatuses of
-            Just BananaFound -> True
-            _ -> False
+        floorInt =
+            floorToInt floor
 
-        bgColor = if hasBanana then myYellow else myGray
-        fontColor = if hasBanana then myGray else myWhite
-        innerText = if hasBanana then "Van Banán" else "Nincs Banán :("
+        hasBanana =
+            case Dict.get floorInt model.bananaFoundStatuses of
+                Just BananaFound ->
+                    True
+
+                _ ->
+                    False
+
+        bgColor =
+            if hasBanana then
+                myYellow
+
+            else
+                myGray
+
+        fontColor =
+            if hasBanana then
+                myGray
+
+            else
+                myWhite
+
+        innerText =
+            if hasBanana then
+                "Van Banán"
+
+            else
+                "Nincs Banán :("
     in
     el
         [ Background.color bgColor
@@ -409,6 +436,7 @@ makeBananaStatusPanel model floor =
         , centerX
         ]
         (text innerText)
+
 
 makeSubscriptionPanel : Model -> Floor -> Element Msg
 makeSubscriptionPanel model floor =
@@ -462,31 +490,44 @@ makeFloorLink model floorInt =
     let
         floorStr =
             String.fromInt floorInt
-        hasBanana = case Dict.get floorInt model.bananaFoundStatuses of
-            Just BananaFound -> True
-            _ -> False
+
+        hasBanana =
+            case Dict.get floorInt model.bananaFoundStatuses of
+                Just BananaFound ->
+                    True
+
+                _ ->
+                    False
     in
-    row [ centerX
+    row
+        [ centerX
         , width (px 200)
         ]
-        [
-            if hasBanana then el [] (text "🍌") else Element.none
-            , Element.link
-                [ Border.rounded 10
-                , Border.width 2
-                , Border.color myBlue
-                , paddingXY 20 14
-                , centerX
-                ]
-                { url = "/floor/" ++ floorStr
-                , label =
-                    el
-                        [ width fill
-                        , Font.center
-                        ]
-                        (text (floorStr ++ ". Emelet"))
-                }
-            , if hasBanana then el [] (text "🍌") else Element.none
+        [ if hasBanana then
+            el [] (text "🍌")
+
+          else
+            Element.none
+        , Element.link
+            [ Border.rounded 10
+            , Border.width 2
+            , Border.color myBlue
+            , paddingXY 20 14
+            , centerX
+            ]
+            { url = "/floor/" ++ floorStr
+            , label =
+                el
+                    [ width fill
+                    , Font.center
+                    ]
+                    (text (floorStr ++ ". Emelet"))
+            }
+        , if hasBanana then
+            el [] (text "🍌")
+
+          else
+            Element.none
         ]
 
 
@@ -496,8 +537,11 @@ makeBananaReportButton model floor =
         floorInt =
             floorToInt floor
 
-        notFoundAttributes = [ Border.color myYellow ]
-        foundAttributes = [ Border.color myWhite, Border.dotted]
+        notFoundAttributes =
+            [ Border.color myYellow ]
+
+        foundAttributes =
+            [ Border.color myWhite, Border.dotted ]
 
         reportBananaTuple =
             ( "Módosítom, van banán a konyhában!"
@@ -529,11 +573,12 @@ makeBananaReportButton model floor =
     in
     Input.button
         ([ Border.rounded 10
-        , Border.width 2
-        , paddingXY 24 14
-        , centerX
-        ] ++
-        attributes)
+         , Border.width 2
+         , paddingXY 24 14
+         , centerX
+         ]
+            ++ attributes
+        )
         { onPress = onPress
         , label =
             el
