@@ -24,10 +24,12 @@ selfSW.addEventListener('push', (event) => {
 
     selfSW.registration.showNotification('Van Banán?', {
         body: `Banánt láttak ${definiteArticle} ${floor}. emeleten!`,
+        data: { floor }
     });
 });
 
-selfSW.addEventListener('activate', async () => {
+
+selfSW.addEventListener('activate', async (a) => {
     console.log('Service Worker activated!');
 
     // setInterval(async () => {
@@ -40,10 +42,31 @@ selfSW.addEventListener('activate', async () => {
     // }, 10000);
 });
 
+
 selfSW.addEventListener('notificationclick', (event) => {
     event.notification.close();
 
-    // event.waitUntil(
-    //     clients.openWindow('/')
-    // );
+    const clients = selfSW.clients;
+
+    const { floor } = event.notification.data;
+    const targetPath = `/floor/${floor}`;
+
+    // Full disclosure: I stole this form MDN
+    //
+    // This looks to see if the current is already open and
+    // focuses if it is
+    event.waitUntil(
+        clients
+        .matchAll({
+            type: "window",
+        })
+        .then((clientList) => {
+            for (const client of clientList) {
+                if (client.url === targetPath && "focus" in client) {
+                    return client.focus();
+                }
+            }
+            if (clients.openWindow) return clients.openWindow(targetPath);
+        }),
+    );
 });
