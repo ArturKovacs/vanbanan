@@ -194,6 +194,7 @@ type Msg
     | GotBananaStates (Result Http.Error (List Int))
     | LinkClicked Browser.UrlRequest
     | UrlChanged Url.Url
+    | DoNothing
 
 
 subscriptionResultToMessage : SubscriptionResult -> Msg
@@ -377,6 +378,9 @@ update msg model =
                 }
             )
 
+        DoNothing ->
+            ( model, Cmd.none )
+
 
 
 -- VIEW
@@ -494,12 +498,16 @@ makeSubscriptionPanel model floor =
     Element.row [ centerX, spacing 8 ]
         [ Input.checkbox []
             { onChange =
-                \shouldSubscribe ->
-                    if shouldSubscribe then
-                        StartSubscription floor
+                if inProgress then
+                    \_ -> DoNothing
 
-                    else
-                        StartRemovingSubscription floor
+                else
+                    \shouldSubscribe ->
+                        if shouldSubscribe then
+                            StartSubscription floor
+
+                        else
+                            StartRemovingSubscription floor
             , icon = Input.defaultCheckbox
             , checked = isSubscribed
             , label =
