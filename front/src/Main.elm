@@ -10,6 +10,7 @@ import Element.Font as Font
 import Element.Input as Input
 import Html
 import Http
+import Json.Decode as Decode
 import Json.Encode
 import Url
 import Url.Parser exposing ((</>), Parser, oneOf, s, top)
@@ -119,6 +120,23 @@ type BananaFoundStatus
 -- | FinishedReportingBananaFound (Result Http.Error ())
 
 
+convertFloorSetToBananaStates : List Int -> Dict Int BananaFoundStatus
+convertFloorSetToBananaStates floorSet =
+    Dict.fromList
+        (List.map
+            (\floor ->
+                ( floor
+                , if List.member floor floorSet then
+                    BananaFound
+
+                  else
+                    BananaNotFound
+                )
+            )
+            allFloors
+        )
+
+
 init : Flags -> Url.Url -> Nav.Key -> ( Model, Cmd Msg )
 init flags url key =
     let
@@ -136,19 +154,7 @@ init flags url key =
                 allFloors
 
         bananaStatuses =
-            Dict.fromList
-                (List.map
-                    (\floor ->
-                        ( floor
-                        , if List.member floor flags.bananaStates then
-                            BananaFound
-
-                          else
-                            BananaNotFound
-                        )
-                    )
-                    allFloors
-                )
+            convertFloorSetToBananaStates flags.bananaStates
     in
     ( { key = key
       , url = url
@@ -185,6 +191,7 @@ type Msg
     | ReportBananaFoundResult Floor (Result Http.Error ())
     | ReportBananaNotFound Floor
     | ReportBananaNotFoundResult Floor (Result Http.Error ())
+    | GotBananaStates (Result Http.Error (List Int))
     | LinkClicked Browser.UrlRequest
     | UrlChanged Url.Url
 
@@ -219,6 +226,11 @@ unsubscribeResultToMessage result =
                 Debug.log "Received unexpected result" result.name
         in
         GotUnsubscribeError (Floor result.floor)
+
+
+decodeBananaStates : Decode.Decoder (List Int)
+decodeBananaStates =
+    Decode.list Decode.int
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -335,6 +347,20 @@ update msg model =
             in
             ( changeBananaStatus floor newBananaFoundStatus, Cmd.none )
 
+        GotBananaStates result ->
+            let
+                newBananaFoundStatues =
+                    case result of
+                        Ok statuses ->
+                            convertFloorSetToBananaStates statuses
+
+                        Err _ ->
+                            -- TODO: Logging the error would be nice here, but the network
+                            -- tab should show the error anyways
+                            model.bananaFoundStatuses
+            in
+            ( { model | bananaFoundStatuses = newBananaFoundStatues }, Cmd.none )
+
         LinkClicked urlRequest ->
             case urlRequest of
                 Browser.Internal url ->
@@ -344,7 +370,12 @@ update msg model =
                     ( model, Nav.load href )
 
         UrlChanged url ->
-            ( { model | url = url }, Cmd.none )
+            ( { model | url = url }
+            , Http.get
+                { url = "/api/banana"
+                , expect = Http.expectJson GotBananaStates decodeBananaStates
+                }
+            )
 
 
 
