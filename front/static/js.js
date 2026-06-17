@@ -21,6 +21,7 @@ function sleep(ms) {
 
 const PORT_RESULT_OK_NAME = "ok"
 const PORT_RESULT_FAILED_NAME = "failed"
+const PORT_RESULT_NO_PUSH_MANAGER_NAME = "noPushManager"
 
 /**
  * @param {string} message 
@@ -55,8 +56,7 @@ if ('serviceWorker' in navigator) {
             displayFatalError(`An error occurred while starting the application. Error: ${message}`);
         }
     }).catch(error => {
-        // Using console.error here so that debug.js can process this. (instead of letting the browser handle the error)
-        console.error('Failed to register service worker:', error);
+        displayFatalError(`Failed to register service worker: ${error}`);
     });
 } else {
     displayFatalError("This website requires service worker support, but it seems that your browser does not support them.");
@@ -170,12 +170,12 @@ async function sendUnsubscribeToServer(subscription, floor) {
 }
 
 /**
- * @param {ServiceWorkerRegistration} serviceWorkerRegistration
+ * @param {PushManager} pushManager
  * @param {string} vapidPublicKey
  * @param {number[]} floors
  */
-async function makeSubscription(serviceWorkerRegistration, vapidPublicKey, floors) {
-    const subscription = await serviceWorkerRegistration.pushManager.subscribe({
+async function makeSubscription(pushManager, vapidPublicKey, floors) {
+    const subscription = await pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: vapidPublicKey
     });
@@ -229,26 +229,38 @@ async function main(serviceWorkerRegistration) {
     const vapidPublicKey = await publicKeyResponse.text();
     console.log('Fetched VAPID public key from server:', vapidPublicKey);
 
-    /** 
+    /**
+     * On iOS, `serviceWorkerRegistration.pushManager` is undefined, if
+     * the application is *not* "saved to the home screen"
+     * 
+     * @type {PushManager | undefined} */
+    const pushManager = serviceWorkerRegistration.pushManager;
+
+
+    /**
      * We don't know if the VAPID key has changed on the server since the subscription was made,
      * so we need to unsubscribe and resubscribe to make sure we are using the correct VAPID key.
-     * 
+     * @param {PushManager} pushManager
      * @param {PushSubscription} subscription
      * @param {number[]} floors
      */
-    async function resubscribeToPush(subscription, floors) {
+    async function resubscribeToPush(pushManager, subscription, floors) {
         try {
             await subscription.unsubscribe();
         } catch (error) {
             console.error('Failed to unsubscribe from push subscription during resubscription process:', error);
             // We can continue with the resubscription process even if unsubscribing failed, as it may have been a transient error
         }
-        return await makeSubscription(serviceWorkerRegistration, vapidPublicKey, floors);
+        return await makeSubscription(pushManager, vapidPublicKey, floors);
     }
 
     async function tryGetPushSubscription() {
-        let subscription = await serviceWorkerRegistration.pushManager.getSubscription();
-        console.log('serviceWorkerRegistration.pushManager.getSubscription:', subscription);
+        if (!pushManager) {
+            console.warn("pushManager was falsy, cannot get push sbuscription. Probably on iOS.")
+            return null;
+        }
+        let subscription = await pushManager.getSubscription();
+        console.log('pushManager.getSubscription:', subscription);
         /** @type {number[] | null} */
         let floors = null;
 
@@ -263,24 +275,10 @@ async function main(serviceWorkerRegistration) {
                 throw new Error(`Floors was falsy. This is unexpected. floors: ${floors}`);
             }
             // TODO get the floors for the subscription from the server and pass them to resubscribeToPush
-            subscription = await resubscribeToPush(subscription, floors);
+            subscription = await resubscribeToPush(pushManager, subscription, floors);
             result = {subscription, floors};
         }
         return result;
-    }
-
-    /** @param {number} floor */
-    async function getOrMakePushSubscription(floor) {
-        let subscription = await tryGetPushSubscription();
-        if (!subscription) {
-            const floors = [floor];
-            let subscriptionDetails = await makeSubscription(serviceWorkerRegistration, vapidPublicKey, floors);
-            subscription = {
-                subscription: subscriptionDetails,
-                floors: floors
-            };
-        }
-        return subscription;
     }
 
     const subscription = await tryGetPushSubscription();
@@ -290,16 +288,19 @@ async function main(serviceWorkerRegistration) {
         node: document.getElementById("app"),
         flags: {
             subscribedToFloors: subscription?.floors ?? [],
-            bananaStates: bananaStates
+            bananaStates: bananaStates,
         }
     });
 
     app.ports.subscribeToFloor.subscribe(
         /** @param {number} targetFloor */
         async function (targetFloor) {
-            console.log('Requesting notification permission and subscribing for notifications for floor', targetFloor);
             let resultName = PORT_RESULT_FAILED_NAME;
             try {
+                if (!pushManager) {
+                    resultName = PORT_RESULT_NO_PUSH_MANAGER_NAME
+                    return;
+                }
                 const permission = await Notification.requestPermission();
                 if (permission !== 'granted') {
                     console.warn('Notification permission was not granted. Permission is:', permission);
@@ -308,7 +309,7 @@ async function main(serviceWorkerRegistration) {
                 try {
                     const subscription = await tryGetPushSubscription();
                     if (!subscription) {
-                        await makeSubscription(serviceWorkerRegistration, vapidPublicKey, [targetFloor]);
+                        await makeSubscription(pushManager, vapidPublicKey, [targetFloor]);
                     } else {
                         await sendSubscriptionToServer(subscription.subscription, targetFloor);
                     }

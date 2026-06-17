@@ -41,6 +41,9 @@ portResultFailedName : String
 portResultFailedName =
     "failed"
 
+portResultNoPushManagerName : String
+portResultNoPushManagerName =
+    "noPushManager"
 
 port subscribeToFloor : Int -> Cmd msg
 
@@ -105,6 +108,7 @@ type SubscriptionStatus
     | Subscribing
     | Subscribed
     | SubscriptionFailed
+    | SubscriptionFailedNoPushManager
     | Unsubscribing
     | UnsubscribeFailed
 
@@ -184,6 +188,7 @@ type Msg
     = StartSubscription Floor
     | GotSubscribeOk Floor
     | GotSubscribeError Floor
+    | GotSubscribeNoPushManager Floor
     | StartRemovingSubscription Floor
     | GotUnsubscribeOk Floor
     | GotUnsubscribeError Floor
@@ -204,6 +209,9 @@ subscriptionResultToMessage result =
 
     else if result.name == portResultFailedName then
         GotSubscribeError (Floor result.floor)
+
+    else if result.name == portResultNoPushManagerName then
+        GotSubscribeNoPushManager (Floor result.floor)
 
     else
         let
@@ -293,6 +301,9 @@ update msg model =
 
         GotUnsubscribeError floor ->
             ( changeSubscription floor UnsubscribeFailed, Cmd.none )
+
+        GotSubscribeNoPushManager floor ->
+            ( changeSubscription floor SubscriptionFailedNoPushManager, Cmd.none )
 
         ReportBananaFound floor ->
             let
@@ -481,39 +492,46 @@ makeSubscriptionPanel model floor =
                 Floor f ->
                     f
 
-        ( isSubscribed, inProgress ) =
+        ( isSubscribed, inProgress, gotNoPushManager ) =
             case Dict.get floorInt model.subscriptionStatuses of
                 Just Subscribed ->
-                    ( True, False )
+                    ( True, False, False )
 
                 Just Subscribing ->
-                    ( False, True )
+                    ( False, True, False )
 
                 Just Unsubscribing ->
-                    ( True, True )
+                    ( True, True, False )
+
+                Just SubscriptionFailedNoPushManager ->
+                    (False, False, True)
 
                 _ ->
-                    ( False, False )
+                    ( False, False, False )
     in
     Element.row [ centerX, spacing 8 ]
-        [ Input.checkbox []
-            { onChange =
-                if inProgress then
-                    \_ -> DoNothing
+        [
+            if gotNoPushManager then
+                paragraph [centerX, Font.center] [text "iOS-en az értesítésekhez, előbb a Home Screen-hez kell adni ezt az oldalt"]
+            else
+                Input.checkbox []
+                { onChange =
+                    if inProgress then
+                        \_ -> DoNothing
 
-                else
-                    \shouldSubscribe ->
-                        if shouldSubscribe then
-                            StartSubscription floor
+                    else
+                        \shouldSubscribe ->
+                            if shouldSubscribe then
+                                StartSubscription floor
 
-                        else
-                            StartRemovingSubscription floor
-            , icon = Input.defaultCheckbox
-            , checked = isSubscribed
-            , label =
-                Input.labelLeft [ padding 5 ]
-                    (text "Kérek Push Értesítéseket")
-            }
+                            else
+                                StartRemovingSubscription floor
+                , icon = Input.defaultCheckbox
+                , checked = isSubscribed
+                , label =
+                    Input.labelLeft [ padding 5 ]
+                        (text "Kérek Push Értesítéseket")
+                }
         , el [ width (px 20) ]
             (if inProgress then
                 text "⏳"
