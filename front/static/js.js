@@ -7,7 +7,7 @@
  * 
  * This script is needed to handle everything that cannot be done directly
  * within Elm, for example service worker registration and notification handling.
- */ 
+ */
 
 const Elm = /** @type {any} */ (window).Elm;
 
@@ -36,7 +36,7 @@ function displayFatalError(message) {
         console.error('The app element was not an instance of HTMLElement. While trying to display', message);
         return;
     }
-    
+
     appElement.replaceChildren();
 
     appElement.textContent = message;
@@ -284,7 +284,7 @@ async function main(serviceWorkerRegistration) {
             }
             // TODO get the floors for the subscription from the server and pass them to resubscribeToPush
             subscription = await resubscribeToPush(pushManager, subscription, floors);
-            result = {subscription, floors};
+            result = { subscription, floors };
         }
         return result;
     }
